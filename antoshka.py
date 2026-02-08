@@ -1,6 +1,7 @@
 ﻿from core.config import load_settings
 from core.dialogue import Dialogue, DialogueConfig
 from core.logger import setup_logger
+from core.stt import create_stt
 from core.tts import TTS, TTSConfig
 
 
@@ -22,24 +23,27 @@ def main():
     )
 
     logger.info("Antoshka started")
-    logger.info("STT mode: text")
+    logger.info("STT mode: %s", (settings.get("stt", {}) or {}).get("mode", "text"))
     logger.info("Dangerous mode: %s", dangerous_mode)
 
     dialogue = Dialogue(DialogueConfig(dangerous_mode=dangerous_mode))
+
+    # STT
+    stt = create_stt(settings)
 
     hello = "текстовый режим. Напиши команду (или 'помощь'). Для выхода: 'выход'."
     print(f"Антошка: {hello}")
     tts.say(hello)
 
     while True:
-        try:
-            text = input("Ты: ").strip()
-        except (EOFError, KeyboardInterrupt):
+        text = stt.listen()
+
+        if text is None:
             print("\nАнтошка: пока!")
             tts.say("Пока!")
             break
 
-        if not text:
+        if text == "":
             continue
 
         answer = dialogue.handle_text(text)
