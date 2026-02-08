@@ -1,5 +1,9 @@
+from core.logger import setup_logger
+
+
 def main() -> None:
-    print("Antoshka MVP: starting...")
+    logger = setup_logger(level="INFO")
+    logger.info("Antoshka MVP: starting...")
 
 
 if __name__ == "__main__":
