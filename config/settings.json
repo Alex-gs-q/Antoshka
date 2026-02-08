@@ -23,5 +23,9 @@
     "provider": "dummy",
     "model": "default",
     "history_max_messages": 10
-  }
+  },
+  "stt": {
+  "mode": "vosk",
+  "vosk_model_path": "models/vosk"
+}
 }
