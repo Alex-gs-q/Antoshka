@@ -10,8 +10,9 @@
   },
   "tts": {
     "enabled": true,
-    "voice": "default",
-    "rate": 180
+    "rate": 180,
+    "volume": 1.0,
+    "voice_name_contains": "Microsoft"
   },
   "safety": {
     "dangerous_mode": false,
@@ -22,13 +23,5 @@
     "provider": "dummy",
     "model": "default",
     "history_max_messages": 10
-  },
-  "tts": {
-  "enabled": true,
-  "rate": 180,
-  "volume": 1.0,
-  "voice_name_contains": null,
-    "voice_name_contains": "Microsoft"
-
-}
+  }
 }
