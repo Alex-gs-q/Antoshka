@@ -12,7 +12,8 @@
     "enabled": true,
     "rate": 180,
     "volume": 1.0,
-    "voice_name_contains": "Microsoft"
+    "voice_name_contains": null,
+    "voice_name_contains": "Pavel"
   },
   "safety": {
     "dangerous_mode": false,
@@ -22,6 +23,8 @@
   "llm": {
     "provider": "dummy",
     "model": "default",
-    "history_max_messages": 10
+    "history_max_messages": 10,
+
+
   }
 }
