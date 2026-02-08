@@ -1,1 +1,2 @@
-# dependencies будут добавляться по шагам
+pyttsx3
+pywin32

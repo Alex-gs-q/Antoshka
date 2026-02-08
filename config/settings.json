@@ -22,5 +22,13 @@
     "provider": "dummy",
     "model": "default",
     "history_max_messages": 10
-  }
+  },
+  "tts": {
+  "enabled": true,
+  "rate": 180,
+  "volume": 1.0,
+  "voice_name_contains": null,
+    "voice_name_contains": "Microsoft"
+
+}
 }
