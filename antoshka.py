@@ -1,4 +1,4 @@
-from core.config import load_settings
+﻿from core.config import load_settings
 from core.dialogue import Dialogue, DialogueConfig
 from core.logger import setup_logger
 from core.tts import TTS, TTSConfig
@@ -10,13 +10,7 @@ def main():
 
     dangerous_mode = bool(settings.get("safety", {}).get("dangerous_mode", False))
 
-    logger.info("Antoshka started")
-    logger.info("STT mode: text")
-    logger.info("Dangerous mode: %s", dangerous_mode)
-
-    dialogue = Dialogue(DialogueConfig(dangerous_mode=dangerous_mode))
-
-    # --- TTS init (один раз при старте) ---
+    # TTS
     tts_raw = settings.get("tts", {}) or {}
     tts = TTS(
         TTSConfig(
@@ -27,24 +21,31 @@ def main():
         )
     )
 
-    start_msg = "Антошка: текстовый режим. Напиши команду (или 'помощь'). Для выхода: 'выход'."
-    print(start_msg)
-    tts.say(start_msg)
+    logger.info("Antoshka started")
+    logger.info("STT mode: text")
+    logger.info("Dangerous mode: %s", dangerous_mode)
+
+    dialogue = Dialogue(DialogueConfig(dangerous_mode=dangerous_mode))
+
+    hello = "текстовый режим. Напиши команду (или 'помощь'). Для выхода: 'выход'."
+    print(f"Антошка: {hello}")
+    tts.say(hello)
 
     while True:
         try:
             text = input("Ты: ").strip()
         except (EOFError, KeyboardInterrupt):
-            bye = "Антошка: пока!"
-            print("\n" + bye)
+            print("\nАнтошка: пока!")
             tts.say("Пока!")
             break
+
+        if not text:
+            continue
 
         answer = dialogue.handle_text(text)
 
         if answer == "__EXIT__":
-            bye = "Антошка: пока!"
-            print(bye)
+            print("Антошка: пока!")
             tts.say("Пока!")
             break
 
