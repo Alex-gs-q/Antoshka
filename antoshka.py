@@ -9,6 +9,7 @@ def main():
     logger = setup_logger()
     settings = load_settings()
 
+    # safety
     dangerous_mode = bool(settings.get("safety", {}).get("dangerous_mode", False))
 
     # TTS
