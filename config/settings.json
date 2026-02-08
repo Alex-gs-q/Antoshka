@@ -1,0 +1,26 @@
+{
+  "app": {
+    "name": "Антошка",
+    "language": "ru",
+    "log_level": "INFO"
+  },
+  "stt": {
+    "mode": "text",
+    "vosk_model_path": "models/vosk"
+  },
+  "tts": {
+    "enabled": true,
+    "voice": "default",
+    "rate": 180
+  },
+  "safety": {
+    "dangerous_mode": false,
+    "confirm_phrase": "подтверждаю",
+    "confirm_ttl_seconds": 10
+  },
+  "llm": {
+    "provider": "dummy",
+    "model": "default",
+    "history_max_messages": 10
+  }
+}
