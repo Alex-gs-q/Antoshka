@@ -8,7 +8,7 @@ from core.logger import setup_logger
 
 @dataclass
 class STTConfig:
-    mode: str = "text"  # future: "vosk"
+    mode: str = "text"
     prompt: str = "Ты: "
 
 
@@ -38,15 +38,15 @@ class TextSTT(BaseSTT):
 
 
 def create_stt(settings: dict) -> BaseSTT:
-    """
-    Factory: creates STT based on settings["stt"]["mode"].
-    For now supports only text mode.
-    """
     logger = setup_logger()
     stt_raw = settings.get("stt", {}) or {}
     mode = (stt_raw.get("mode") or "text").lower()
 
-    if mode != "text":
-        logger.warning("STT mode '%s' not implemented yet, fallback to text", mode)
+    if mode == "vosk":
+        # Lazy import to avoid crash if vosk deps not installed in text mode
+        from core.stt_vosk import VoskSTT, VoskConfig
+
+        model_path = stt_raw.get("vosk_model_path") or "models/vosk"
+        return VoskSTT(VoskConfig(model_path=str(model_path)))
 
     return TextSTT(STTConfig(mode="text", prompt="Ты: "))
