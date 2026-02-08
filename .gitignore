@@ -47,6 +47,8 @@ MANIFEST
 *.log
 logs/*
 !logs/.keep
+data/*
+!data/.keep
 
 # =========================
 # Tests / coverage

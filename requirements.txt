@@ -1,12 +1,8 @@
 pyttsx3
 pywin32
-
 vosk
 sounddevice
 numpy
-openai>=1.0.0
-python-dotenv>=1.0.0
-python-dotenv
-openai
 httpx
-python-dotenv
+python-dotenv>=1.0.0
+openai>=1.0.0

@@ -15,6 +15,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "confirm_ttl_seconds": 10,
     },
     "llm": {"provider": "dummy", "model": "default", "history_max_messages": 10},
+    "ui": {"wake_word": False},
 }
 
 
@@ -47,3 +48,14 @@ def load_settings(path: str = "config/settings.json") -> Dict[str, Any]:
     except Exception as e:
         logger.exception("Failed to load settings from %s. Using defaults. Error: %s", p, e)
         return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(settings: Dict[str, Any], path: str = "config/settings.json") -> None:
+    logger = setup_logger(level=DEFAULT_SETTINGS["app"]["log_level"])
+    p = Path(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info("Settings saved to %s", p)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Failed to save settings to %s. Error: %s", p, e)

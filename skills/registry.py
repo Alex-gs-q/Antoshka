@@ -22,3 +22,10 @@ def get_handler(intent: str) -> Optional[Handler]:
         "exit": skill_exit.handle,
     }
     return mapping.get(intent)
+
+
+def run_intent(intent: str, slots: Dict[str, Any]) -> str:
+    handler = get_handler(intent)
+    if handler is None:
+        return f"Неизвестная команда: {intent}"
+    return handler(slots or {})

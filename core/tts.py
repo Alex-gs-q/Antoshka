@@ -24,6 +24,7 @@ class TTS:
         self.logger = setup_logger()
         self.cfg = cfg
         self.engine = None
+        self._last_volume = float(cfg.volume)
 
         if not cfg.enabled:
             self.logger.info("TTS disabled by config")
@@ -72,3 +73,38 @@ class TTS:
             self.engine.runAndWait()
         except Exception as e:  # noqa: BLE001
             self.logger.exception("TTS say failed: %s", e)
+
+    def get_volume(self) -> float | None:
+        if not self.engine:
+            return None
+        try:
+            return float(self.engine.getProperty("volume"))
+        except Exception as e:  # noqa: BLE001
+            self.logger.exception("TTS get_volume failed: %s", e)
+            return None
+
+    def set_volume(self, level: float) -> bool:
+        if not self.engine:
+            return False
+        level = max(0.0, min(1.0, float(level)))
+        try:
+            self.engine.setProperty("volume", level)
+            self._last_volume = level
+            return True
+        except Exception as e:  # noqa: BLE001
+            self.logger.exception("TTS set_volume failed: %s", e)
+            return False
+
+    def set_mute(self, mute: bool) -> bool:
+        if not self.engine:
+            return False
+        try:
+            if mute:
+                current = self.get_volume()
+                if current is not None:
+                    self._last_volume = current
+                return self.set_volume(0.0)
+            return self.set_volume(self._last_volume or 1.0)
+        except Exception as e:  # noqa: BLE001
+            self.logger.exception("TTS set_mute failed: %s", e)
+            return False

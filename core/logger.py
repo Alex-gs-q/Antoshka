@@ -5,7 +5,7 @@ from pathlib import Path
 
 def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
     """
-    Создаёт и возвращает логгер.
+    Создает и возвращает логгер.
     Пишет:
     - в консоль
     - в logs/antoshka.log (с ротацией)

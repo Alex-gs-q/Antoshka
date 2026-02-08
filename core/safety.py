@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from time import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from core.logger import setup_logger
 
@@ -27,6 +27,7 @@ class Action:
     type: тип действия (open_url/open_path/run_app/close_app/delete_file/...)
     payload: параметры (url/path/app_name/etc)
     """
+
     type: str
     payload: Dict[str, Any]
 
@@ -44,7 +45,7 @@ class SafetyGate:
         self.confirm_ttl_seconds = int(confirm_ttl_seconds)
         self._confirm_until_ts: float = 0.0
 
-        # Жёсткий запрет (никогда в MVP)
+        # Жесткий запрет (никогда в MVP)
         self.deny_types = {
             "delete_file",
             "format_disk",
@@ -59,7 +60,7 @@ class SafetyGate:
             "open_system_folder",
         }
 
-        # Белый список разрешённых действий в safe режиме
+        # Белый список разрешенных действий в safe режиме
         self.allow_types = {
             "help",
             "time",
@@ -69,6 +70,13 @@ class SafetyGate:
             "open_url",
             "open_path",
             "run_app",
+            "open_app",
+            "search_web",
+            "note_create",
+            "timer_set",
+            "reminder_set",
+            "volume_set",
+            "chat",
         }
 
     def confirm(self, phrase: str) -> bool:
@@ -85,12 +93,10 @@ class SafetyGate:
         return time() <= self._confirm_until_ts
 
     def check(self, action: Action) -> SafetyResult:
-        """
-        Вернёт решение безопасности.
-        """
+        """Возвращает решение безопасности."""
         a_type = action.type
 
-        # 1) Жёсткий deny
+        # 1) Жесткий deny
         if a_type in self.deny_types:
             self.logger.warning("Safety DENY action=%s payload=%s", a_type, action.payload)
             return SafetyResult(SafetyDecision.DENY, "Запрещено политикой безопасности")
@@ -100,7 +106,7 @@ class SafetyGate:
             self.logger.warning("Safety DENY unknown action=%s payload=%s", a_type, action.payload)
             return SafetyResult(SafetyDecision.DENY, "Неизвестное действие")
 
-        # 3) Если dangerous_mode включён — можно больше (в MVP пока просто логика)
+        # 3) Если dangerous_mode включен — можно больше (в MVP просто логика)
         if self.dangerous_mode:
             self.logger.info("Safety ALLOW (dangerous_mode) action=%s payload=%s", a_type, action.payload)
             return SafetyResult(SafetyDecision.ALLOW, "dangerous_mode=true")
@@ -113,6 +119,6 @@ class SafetyGate:
             self.logger.info("Safety NEED_CONFIRM action=%s payload=%s", a_type, action.payload)
             return SafetyResult(SafetyDecision.NEED_CONFIRM, "Нужно подтверждение: скажи 'подтверждаю'")
 
-        # 5) Обычные разрешённые действия
+        # 5) Обычные разрешенные действия
         self.logger.info("Safety ALLOW action=%s payload=%s", a_type, action.payload)
         return SafetyResult(SafetyDecision.ALLOW, "Разрешено")

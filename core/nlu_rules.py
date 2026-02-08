@@ -26,7 +26,7 @@ _CACHED_PAIRS: List[Tuple[str, str]] | None = None
 def _load_pairs() -> List[Tuple[str, str]]:
     """
     Возвращает список (phrase, intent), где phrase уже нормализована.
-    Сортируем по длине фразы: длинные матчатся первыми.
+    Сортируем по длине фразы: длинные матчится первыми.
     """
     global _CACHED_PAIRS
 
@@ -52,7 +52,6 @@ def _phrase_as_words_in_text(phrase: str, text: str) -> bool:
     Проверяем, что phrase встречается в text как "слова", а не внутри других слов.
     Пример: phrase="час" НЕ должен матчиться в "сейчас".
     """
-    # границы: начало/пробел слева и конец/пробел справа
     pattern = r"(?:^|\s)" + re.escape(phrase) + r"(?:$|\s)"
     return re.search(pattern, text) is not None
 

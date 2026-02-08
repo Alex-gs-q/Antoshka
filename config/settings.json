@@ -5,11 +5,12 @@
     "log_level": "INFO"
   },
   "stt": {
-    "mode": "text",
+    "mode": "vosk",
     "vosk_model_path": "models/vosk"
   },
   "tts": {
     "enabled": true,
+    "voice": "default",
     "rate": 180,
     "volume": 1.0,
     "voice_name_contains": null
@@ -20,12 +21,11 @@
     "confirm_ttl_seconds": 10
   },
   "llm": {
-    "provider": "dummy",
-    "model": "default",
+    "provider": "openai",
+    "model": "gpt-4o-mini",
     "history_max_messages": 10
   },
-  "stt": {
-  "mode": "vosk",
-  "vosk_model_path": "models/vosk"
-}
+  "ui": {
+    "wake_word": true
+  }
 }
