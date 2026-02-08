@@ -1,69 +1,59 @@
+from __future__ import annotations
+
 import json
-import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Any, List, Tuple
 
 from core.logger import setup_logger
-from core.text_norm import normalize_ru
+from core.text_norm import normalize_text
 
 
-@dataclass
+@dataclass(frozen=True)
 class NLUResult:
     intent: str
     slots: Dict[str, Any]
     confidence: float = 1.0
 
 
-_PHRASES_CACHE: Optional[Dict[str, Any]] = None
+_PHRASES_PATH = Path("config") / "phrases_ru.json"
 
 
-def load_phrases(path: str = "config/phrases_ru.json") -> Dict[str, Any]:
-    global _PHRASES_CACHE
-    if _PHRASES_CACHE is not None:
-        return _PHRASES_CACHE
-
-    p = Path(path)
-    data = json.loads(p.read_text(encoding="utf-8"))
-    _PHRASES_CACHE = data
-    return data
-
-
-def _match_exact(norm: str, phrases: list[str]) -> bool:
-    return any(norm == normalize_ru(x) for x in phrases)
+@lru_cache(maxsize=1)
+def _load_phrases_normalized() -> Dict[str, List[str]]:
+    """
+    Load phrases and normalize them once.
+    Cached to avoid re-reading file every request.
+    """
+    data = json.loads(_PHRASES_PATH.read_text(encoding="utf-8"))
+    out: Dict[str, List[str]] = {}
+    for intent, phrases in data.items():
+        out[intent] = [normalize_text(p) for p in phrases]
+    return out
 
 
-def detect_intent(text: str) -> Optional[NLUResult]:
+def detect_intent(text: str) -> NLUResult:
     logger = setup_logger()
-    norm = normalize_ru(text)
 
-    if not norm:
-        return None
+    t = normalize_text(text)
+    if not t:
+        return NLUResult(intent="unknown", slots={}, confidence=0.0)
 
-    cfg = load_phrases()
-    intents = cfg.get("intents", {})
-    sites = cfg.get("sites", {})
+    phrases = _load_phrases_normalized()
 
-    # 1) точные интенты
-    for intent_name in ("help", "time", "date", "greet", "exit"):
-        phrases = intents.get(intent_name, [])
-        if phrases and _match_exact(norm, phrases):
-            logger.info("NLU matched intent=%s text=%s", intent_name, norm)
-            return NLUResult(intent=intent_name, slots={})
+    # (phrase, intent) pairs sorted by phrase length desc
+    pairs: List[Tuple[str, str]] = []
+    for intent, items in phrases.items():
+        for p in items:
+            if p:
+                pairs.append((p, intent))
+    pairs.sort(key=lambda x: len(x[0]), reverse=True)
 
-    # 2) open_url: "открой ютуб" / "открой https://..."
-    m = re.match(r"^(открой|открыть|запусти|запуск)\s+(?P<target>.+)$", norm)
-    if m:
-        target = m.group("target").strip()
+    for phrase, intent in pairs:
+        # exact OR substring
+        if t == phrase or phrase in t:
+            logger.info("NLU matched intent=%s text=%s", intent, t)
+            return NLUResult(intent=intent, slots={}, confidence=1.0)
 
-        if target in sites:
-            url = sites[target]
-            logger.info("NLU matched intent=open_url target=%s url=%s", target, url)
-            return NLUResult(intent="open_url", slots={"url": url})
-
-        if target.startswith(("http://", "https://")) or re.search(r"\.(ru|com|net|org|ua|io|dev)(/|$)", target):
-            url = target if target.startswith(("http://", "https://")) else f"https://{target}"
-            logger.info("NLU matched intent=open_url url=%s", url)
-            return NLUResult(intent="open_url", slots={"url": url})
-
-    return None
+    return NLUResult(intent="unknown", slots={}, confidence=0.0)

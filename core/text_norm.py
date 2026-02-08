@@ -1,60 +1,35 @@
+from __future__ import annotations
+
 import re
 
-# Слова-паразиты/вежливость — можно расширять
-FILLER_WORDS_RU = {
-    "пожалуйста",
-    "пж",
-    "плиз",
-    "ну",
-    "ээ",
-    "эм",
-    "короче",
-    "типа",
-}
-
-# Простые замены синонимов (минимум для MVP)
-REPLACEMENTS = {
-    "youtube": "ютуб",
-    "ютьюб": "ютуб",
-    "you tube": "ютуб",
-    "гугл": "google",  # можно наоборот, но пусть будет единообразно
-}
+# всё, что НЕ буква/цифра/пробел — выкидываем
+_RE_NON_ALNUM = re.compile(r"[^0-9a-zа-яё\s]+", flags=re.IGNORECASE)
+_RE_SPACES = re.compile(r"\s+", flags=re.IGNORECASE)
 
 
 def normalize_ru(text: str) -> str:
     """
-    Нормализация русского текста для NLU (правила).
-    1) lower
-    2) ё->е
-    3) убрать лишние пробелы
-    4) убрать большую часть пунктуации
-    5) применить простые замены (youtube->ютуб и т.п.)
-    6) убрать слова-паразиты (минимальный список)
+    Нормализация русского текста для NLU/STT:
+    - lower
+    - ё -> е
+    - выкинуть пунктуацию
+    - схлопнуть пробелы
     """
-    if not text:
+    if text is None:
         return ""
 
-    s = text.strip().lower()
-    s = s.replace("ё", "е")
-
-    # заменить некоторые синонимы до чистки пунктуации
-    for k, v in REPLACEMENTS.items():
-        s = s.replace(k, v)
-
-    # убрать всё, кроме букв/цифр/пробелов
-    # (разрешаем дефис внутри слов: "по-русски")
-    s = re.sub(r"[^\w\s\-]+", " ", s, flags=re.UNICODE)
-
-    # заменить подчёркивания на пробелы (на всякий)
-    s = s.replace("_", " ")
-
-    # схлопнуть пробелы
-    s = re.sub(r"\s+", " ", s).strip()
-
-    if not s:
+    t = str(text).strip().lower()
+    if not t:
         return ""
 
-    tokens = s.split()
-    tokens = [t for t in tokens if t not in FILLER_WORDS_RU]
+    t = t.replace("ё", "е")
+    t = _RE_NON_ALNUM.sub(" ", t)
+    t = _RE_SPACES.sub(" ", t).strip()
+    return t
 
-    return " ".join(tokens)
+
+def normalize_text(text: str) -> str:
+    """
+    Stable alias for normalization used across modules.
+    """
+    return normalize_ru(text)
