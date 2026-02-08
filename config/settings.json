@@ -1,0 +1,118 @@
+{
+  "version": "2.0",
+  "model": {
+    "path": "models/vosk-model-small-ru",
+    "sample_rate": 16000,
+    "language": "ru"
+  },
+  "audio": {
+    "device_index": null,
+    "channels": 1,
+    "chunk_size": 1024,
+    "silence_threshold": 500,
+    "silence_duration": 1.0,
+    "phrase_timeout": 5.0,
+    "vad": {
+      "enabled": true,
+      "threshold": 0.5
+    }
+  },
+  "recognition": {
+    "trigger_word": "антошка",
+    "wake_word": "",
+    "min_confidence": 0.4,
+    "stop_words": [
+      "пожалуйста",
+      "ну",
+      "смотри",
+      "вообще"
+    ],
+    "synonyms": {
+      "ютуб": "youtube",
+      "гугл": "google",
+      "инет": "интернет"
+    }
+  },
+  "tts": {
+    "engine": "pyttsx3",
+    "rate": 175,
+    "volume": 0.9,
+    "voice": "russian",
+    "gender": "female"
+  },
+  "security": {
+    "dangerous_intents": [
+      "SHUTDOWN",
+      "RESTART",
+      "DELETE_FILE",
+      "FORMAT_DISK"
+    ],
+    "confirmation": {
+      "enabled": true,
+      "timeout": 10,
+      "phrases": {
+        "confirm": [
+          "подтверждаю",
+          "да",
+          "согласен"
+        ],
+        "cancel": [
+          "отмена",
+          "нет",
+          "стоп"
+        ]
+      }
+    },
+    "paths": {
+      "allowed": [
+        "~/Documents",
+        "~/Downloads",
+        "~/Desktop"
+      ],
+      "blocked": [
+        "/etc",
+        "/bin",
+        "/sbin",
+        "C:\\Windows"
+      ]
+    },
+    "dangerous_mode": false
+  },
+  "skills": {
+    "enabled": true,
+    "default": [
+      "help",
+      "time",
+      "open",
+      "search",
+      "timer",
+      "calculator"
+    ],
+    "custom_path": "skills"
+  },
+  "web": {
+    "default_search_engine": "https://www.google.com/search?q=",
+    "quick_sites": {
+      "youtube": "https://youtube.com",
+      "вконтакте": "https://vk.com",
+      "яндекс": "https://yandex.ru",
+      "гугл": "https://google.com"
+    }
+  },
+  "ui": {
+    "show_welcome": true,
+    "show_recognized_text": true,
+    "color_output": true
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/antoshka.log",
+    "max_size_mb": 10
+  },
+  "user": {
+    "name": "Пользователь",
+    "preferences": {
+      "greeting_style": "friendly"
+    }
+  }
+}
