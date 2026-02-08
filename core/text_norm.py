@@ -1,35 +1,39 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
-# всё, что НЕ буква/цифра/пробел — выкидываем
-_RE_NON_ALNUM = re.compile(r"[^0-9a-zа-яё\s]+", flags=re.IGNORECASE)
-_RE_SPACES = re.compile(r"\s+", flags=re.IGNORECASE)
+
+# Удаляем все "шумы", но оставляем буквы/цифры/пробелы.
+# Важно: не ломаем русские буквы.
+_PUNCT_RE = re.compile(r"[^\w\s]+", flags=re.UNICODE)
+_SPACES_RE = re.compile(r"\s+", flags=re.UNICODE)
 
 
 def normalize_ru(text: str) -> str:
     """
-    Нормализация русского текста для NLU/STT:
+    Нормализация русского текста:
     - lower
     - ё -> е
-    - выкинуть пунктуацию
-    - схлопнуть пробелы
+    - убираем пунктуацию
+    - схлопываем пробелы
     """
-    if text is None:
+    if not text:
         return ""
 
-    t = str(text).strip().lower()
-    if not t:
-        return ""
-
+    t = text.strip().lower()
     t = t.replace("ё", "е")
-    t = _RE_NON_ALNUM.sub(" ", t)
-    t = _RE_SPACES.sub(" ", t).strip()
+    t = unicodedata.normalize("NFKC", t)
+
+    # Пунктуацию заменяем на пробел, чтобы слова не склеивались
+    t = _PUNCT_RE.sub(" ", t)
+    t = _SPACES_RE.sub(" ", t).strip()
     return t
 
 
 def normalize_text(text: str) -> str:
     """
-    Stable alias for normalization used across modules.
+    СТАБИЛЬНЫЙ API для остальных модулей.
+    Всегда импортируем normalize_text().
     """
     return normalize_ru(text)

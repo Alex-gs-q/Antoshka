@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from core.logger import setup_logger
 from core.text_norm import normalize_text
@@ -19,18 +19,42 @@ class NLUResult:
 
 _PHRASES_PATH = Path("config") / "phrases_ru.json"
 
+# Кэшируем фразы, чтобы не читать JSON каждый раз
+_CACHED_PAIRS: List[Tuple[str, str]] | None = None
 
-@lru_cache(maxsize=1)
-def _load_phrases_normalized() -> Dict[str, List[str]]:
+
+def _load_pairs() -> List[Tuple[str, str]]:
     """
-    Load phrases and normalize them once.
-    Cached to avoid re-reading file every request.
+    Возвращает список (phrase, intent), где phrase уже нормализована.
+    Сортируем по длине фразы: длинные матчатся первыми.
     """
+    global _CACHED_PAIRS
+
+    if _CACHED_PAIRS is not None:
+        return _CACHED_PAIRS
+
     data = json.loads(_PHRASES_PATH.read_text(encoding="utf-8"))
-    out: Dict[str, List[str]] = {}
+    pairs: List[Tuple[str, str]] = []
+
     for intent, phrases in data.items():
-        out[intent] = [normalize_text(p) for p in phrases]
-    return out
+        for p in phrases:
+            pn = normalize_text(p)
+            if pn:
+                pairs.append((pn, intent))
+
+    pairs.sort(key=lambda x: len(x[0]), reverse=True)
+    _CACHED_PAIRS = pairs
+    return pairs
+
+
+def _phrase_as_words_in_text(phrase: str, text: str) -> bool:
+    """
+    Проверяем, что phrase встречается в text как "слова", а не внутри других слов.
+    Пример: phrase="час" НЕ должен матчиться в "сейчас".
+    """
+    # границы: начало/пробел слева и конец/пробел справа
+    pattern = r"(?:^|\s)" + re.escape(phrase) + r"(?:$|\s)"
+    return re.search(pattern, text) is not None
 
 
 def detect_intent(text: str) -> NLUResult:
@@ -40,20 +64,15 @@ def detect_intent(text: str) -> NLUResult:
     if not t:
         return NLUResult(intent="unknown", slots={}, confidence=0.0)
 
-    phrases = _load_phrases_normalized()
-
-    # (phrase, intent) pairs sorted by phrase length desc
-    pairs: List[Tuple[str, str]] = []
-    for intent, items in phrases.items():
-        for p in items:
-            if p:
-                pairs.append((p, intent))
-    pairs.sort(key=lambda x: len(x[0]), reverse=True)
-
-    for phrase, intent in pairs:
-        # exact OR substring
-        if t == phrase or phrase in t:
+    for phrase, intent in _load_pairs():
+        # 1) точное совпадение
+        if t == phrase:
             logger.info("NLU matched intent=%s text=%s", intent, t)
             return NLUResult(intent=intent, slots={}, confidence=1.0)
+
+        # 2) совпадение по словам (без "час" внутри "сейчас")
+        if _phrase_as_words_in_text(phrase, t):
+            logger.info("NLU matched intent=%s text=%s", intent, t)
+            return NLUResult(intent=intent, slots={}, confidence=0.9)
 
     return NLUResult(intent="unknown", slots={}, confidence=0.0)
