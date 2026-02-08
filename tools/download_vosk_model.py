@@ -15,7 +15,7 @@ def main():
         print(f"[OK] Model already exists in: {TARGET_DIR}")
         return
 
-    print(f"[DL] Downloading model zip...")
+    print("[DL] Downloading model zip...")
     urlretrieve(MODEL_URL, ZIP_PATH)
     print(f"[OK] Downloaded: {ZIP_PATH}")
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import httpx
 from dotenv import load_dotenv
@@ -13,7 +14,7 @@ from llm.prompts import SYSTEM_PROMPT_RU
 
 @dataclass(frozen=True)
 class LLMConfig:
-    provider: str = "dummy"          # "dummy" | "openai"
+    provider: str = "dummy"  # "dummy" | "openai"
     model: str = "gpt-4o-mini"
     base_url: str = "https://api.openai.com/v1"
     timeout_seconds: float = 30.0
@@ -32,28 +33,67 @@ class LLMClient:
         self.log = setup_logger()
         self.config = config
 
-        load_dotenv()  # читает .env
+        load_dotenv()
 
         self.history: List[Dict[str, Any]] = []
+        self.api_key = ""
+        self.base_url = self.config.base_url
 
         if self.config.provider == "openai":
-            self.api_key = os.getenv("OPENAI_API_KEY", "")
+            self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
             if not self.api_key:
                 raise RuntimeError("OPENAI_API_KEY is missing in .env")
 
-            # частая причина твоей ошибки — мусор/кириллица/BOM в ключе
             if not self.api_key.isascii():
                 raise RuntimeError("OPENAI_API_KEY contains non-ASCII characters")
+            if "..." in self.api_key or "твой" in self.api_key.lower():
+                raise RuntimeError("OPENAI_API_KEY looks like a placeholder")
 
-            self.base_url = os.getenv("OPENAI_BASE_URL", self.config.base_url).rstrip("/")
+            self.base_url = (
+                os.getenv("OPENAI_BASE_URL", self.config.base_url).strip().rstrip("/")
+            )
+            if not self.base_url:
+                raise RuntimeError("OPENAI_BASE_URL is empty")
             if not self.base_url.isascii():
                 raise RuntimeError("OPENAI_BASE_URL contains non-ASCII characters")
 
             self.log.info("LLM initialized (openai), model=%s", self.config.model)
         else:
-            self.api_key = ""
-            self.base_url = self.config.base_url
             self.log.info("LLM initialized (dummy)")
+
+    def status(self) -> Dict[str, Any]:
+        provider = self.config.provider
+        ok = provider == "openai" and bool(self.api_key)
+        reason = ""
+        if provider == "dummy":
+            reason = "provider=dummy"
+        if provider != "dummy" and not self.api_key:
+            reason = "missing_api_key"
+        return {
+            "provider": provider,
+            "model": self.config.model,
+            "base_url": self.base_url,
+            "ok": ok,
+            "reason": reason,
+        }
+
+    def test_connection(self) -> Tuple[bool, str]:
+        if self.config.provider != "openai":
+            return False, "provider=dummy"
+        if not self.api_key:
+            return False, "missing_api_key"
+
+        url = f"{self.base_url}/models"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        try:
+            with httpx.Client(timeout=self.config.timeout_seconds) as client:
+                r = client.get(url, headers=headers)
+                r.raise_for_status()
+            return True, "ok"
+        except Exception as e:
+            self.log.error("LLM test failed: %s", e)
+            return False, str(e)
 
     def reset_history(self) -> None:
         self.history = []
@@ -65,14 +105,13 @@ class LLMClient:
 
         if self.config.provider == "dummy":
             return (
-                "Сейчас ИИ отключён (provider=dummy). "
+                "Сейчас ИИ отключен (provider=dummy). "
                 "Чтобы включить — задай OPENAI_API_KEY в .env и поставь llm.provider=openai."
             )
 
         if self.config.provider != "openai":
             return f"Неизвестный LLM provider: {self.config.provider}"
 
-        # history: добавляем user
         self.history.append({"role": "user", "content": user_text})
         self._trim_history()
 
@@ -82,11 +121,28 @@ class LLMClient:
             self.log.error("LLM request failed: %s", e)
             return "Извини, сейчас не могу ответить (LLM недоступен)."
 
-        # history: добавляем assistant
         self.history.append({"role": "assistant", "content": answer})
         self._trim_history()
 
         return answer
+
+    def call_with_tools(
+        self, user_text: str, tools: List[Dict[str, Any]]
+    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+        user_text = (user_text or "").strip()
+        if not user_text:
+            return None
+
+        if self.config.provider == "dummy":
+            return None
+        if self.config.provider != "openai":
+            return None
+
+        try:
+            return self._ask_openai_tool_call(user_text, tools)
+        except Exception as e:
+            self.log.error("LLM tool call failed: %s", e)
+            return None
 
     def _trim_history(self) -> None:
         max_n = max(0, int(self.config.history_max_messages))
@@ -105,11 +161,6 @@ class LLMClient:
             "Content-Type": "application/json",
         }
 
-        # гарантируем: заголовки ASCII (чтобы не ловить твою ошибку)
-        for k, v in headers.items():
-            if not v.isascii():
-                raise RuntimeError(f"Header {k} contains non-ASCII characters")
-
         payload = {
             "model": self.config.model,
             "instructions": SYSTEM_PROMPT_RU,
@@ -121,7 +172,6 @@ class LLMClient:
             r.raise_for_status()
             data = r.json()
 
-        # Парсим ответ как в документации Responses API :contentReference[oaicite:1]{index=1}
         output = data.get("output", [])
         for item in output:
             if item.get("type") == "message" and item.get("role") == "assistant":
@@ -131,3 +181,45 @@ class LLMClient:
                         return part.get("text", "").strip()
 
         return ""
+
+    def _ask_openai_tool_call(
+        self, user_text: str, tools: List[Dict[str, Any]]
+    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+        url = f"{self.base_url}/responses"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": self.config.model,
+            "instructions": SYSTEM_PROMPT_RU,
+            "input": user_text,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+
+        with httpx.Client(timeout=self.config.timeout_seconds) as client:
+            r = client.post(url, headers=headers, json=payload)
+            r.raise_for_status()
+            data = r.json()
+
+        output = data.get("output", [])
+        for item in output:
+            if item.get("type") in {"function_call", "tool_call"}:
+                name = item.get("name") or item.get("function", {}).get("name")
+                arguments = (
+                    item.get("arguments")
+                    or item.get("function", {}).get("arguments")
+                    or {}
+                )
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        arguments = {}
+                if name:
+                    return name, arguments
+
+        return None

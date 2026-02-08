@@ -8,7 +8,6 @@ from typing import Optional
 
 from core.logger import setup_logger
 
-
 logger = setup_logger()
 
 

@@ -6,9 +6,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import load_settings
-from core.logger import setup_logger
-from core.stt_vosk import VoskSTT, VoskConfig
+from core.config import load_settings  # noqa: E402
+from core.logger import setup_logger  # noqa: E402
+from core.stt_vosk import VoskSTT, VoskConfig  # noqa: E402
 
 
 def main():

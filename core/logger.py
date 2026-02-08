@@ -5,7 +5,7 @@ from pathlib import Path
 
 def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
     """
-    Создаёт и возвращает логгер.
+    Создает и возвращает логгер.
     Пишет:
     - в консоль
     - в logs/antoshka.log (с ротацией)
@@ -14,6 +14,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
 
     # чтобы не дублировались хендлеры при повторном вызове
     if logger.handlers:
+        _ensure_app_log_handler(logger)
         return logger
 
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
@@ -21,6 +22,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
     logs_dir = Path("logs")
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_file = logs_dir / "antoshka.log"
+    app_log_file = logs_dir / "app.log"
 
     fmt = logging.Formatter(
         fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -41,7 +43,37 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
     )
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)
+    app_file_handler = RotatingFileHandler(
+        filename=str(app_log_file),
+        maxBytes=1_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    app_file_handler.setFormatter(fmt)
+    logger.addHandler(app_file_handler)
 
     logger.propagate = False
     logger.info("Logger initialized")
     return logger
+
+
+def _ensure_app_log_handler(logger: logging.Logger) -> None:
+    logs_dir = Path("logs")
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    app_log_file = str(logs_dir / "app.log")
+    for handler in logger.handlers:
+        if isinstance(handler, RotatingFileHandler):
+            if str(handler.baseFilename) == app_log_file:
+                return
+    fmt = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    app_file_handler = RotatingFileHandler(
+        filename=app_log_file,
+        maxBytes=1_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    app_file_handler.setFormatter(fmt)
+    logger.addHandler(app_file_handler)

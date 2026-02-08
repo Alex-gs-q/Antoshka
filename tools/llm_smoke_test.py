@@ -11,13 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.config import load_settings
-from core.logger import setup_logger
-from llm.client import LLMClient, LLMConfig
+from core.config import load_settings  # noqa: E402
+from core.logger import setup_logger  # noqa: E402
+from llm.client import LLMClient, LLMConfig  # noqa: E402
 
 
 def main() -> None:
-    log = setup_logger()
+    setup_logger()
     settings = load_settings()
 
     llm_raw = settings.get("llm", {}) or {}

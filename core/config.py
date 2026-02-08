@@ -3,18 +3,36 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core.logger import setup_logger
-
+from core.resources import resource_path
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "app": {"name": "Антошка", "language": "ru", "log_level": "INFO"},
     "stt": {"mode": "text", "vosk_model_path": "models/vosk"},
-    "tts": {"enabled": True, "voice": "default", "rate": 180},
+    "tts": {
+        "enabled": True,
+        "provider": "auto",
+        "voice": "ru-RU-DmitryNeural",
+        "rate": 180,
+        "volume": 1.0,
+        "pitch": 0,
+        "voice_name_contains": None,
+    },
     "safety": {
         "dangerous_mode": False,
         "confirm_phrase": "подтверждаю",
         "confirm_ttl_seconds": 10,
     },
-    "llm": {"provider": "dummy", "model": "default", "history_max_messages": 10},
+    "llm": {"provider": "dummy", "model": "gpt-4o-mini", "history_max_messages": 10},
+    "custom_sites": {},
+    "custom_apps": {},
+    "ui": {
+        "wake_word": False,
+        "continuous_dialogue": True,
+        "hands_free": False,
+        "ai_mode": False,
+        "voice_filter_lang": "All",
+        "voice_filter_gender": "All",
+    },
 }
 
 
@@ -34,8 +52,12 @@ def load_settings(path: str = "config/settings.json") -> Dict[str, Any]:
     p = Path(path)
 
     if not p.exists():
-        logger.warning("Settings file not found: %s. Using defaults.", p)
-        return dict(DEFAULT_SETTINGS)
+        bundled = resource_path(path)
+        if bundled.exists():
+            p = bundled
+        else:
+            logger.warning("Settings file not found: %s. Using defaults.", p)
+            return dict(DEFAULT_SETTINGS)
 
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -45,5 +67,20 @@ def load_settings(path: str = "config/settings.json") -> Dict[str, Any]:
         logger.info("Settings loaded from %s", p)
         return settings
     except Exception as e:
-        logger.exception("Failed to load settings from %s. Using defaults. Error: %s", p, e)
+        logger.exception(
+            "Failed to load settings from %s. Using defaults. Error: %s", p, e
+        )
         return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(settings: Dict[str, Any], path: str = "config/settings.json") -> None:
+    logger = setup_logger(level=DEFAULT_SETTINGS["app"]["log_level"])
+    p = Path(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info("Settings saved to %s", p)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Failed to save settings to %s. Error: %s", p, e)
