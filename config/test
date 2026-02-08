@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "model_path": "models/vosk-model-small-ru",
+  "sample_rate": 16000,
+  "trigger_word": "антошка",
+  "tts_rate": 175,
+  "tts_volume": 0.9,
+  "security": {
+    "confirmation_timeout": 10,
+    "confirmation_words": ["подтверждаю", "да", "согласен"],
+    "cancel_words": ["отмена", "нет", "стоп"]
+  },
+  "paths": {
+    "allowed": ["~/Documents", "~/Downloads", "~/Desktop"],
+    "blocked": []
+  }
+}
