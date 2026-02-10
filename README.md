@@ -16,6 +16,11 @@ UI:
 python antoshka_ui.py
 ```
 
+## Guides
+
+- User guide: `docs/USER_GUIDE.md`
+- Developer guide: `docs/DEVELOPER_GUIDE.md`
+
 ## First Run (Windows)
 
 If you get UnicodeEncodeError in console, run:
@@ -52,6 +57,13 @@ If the key is missing or looks like a placeholder, UI shows a clear diagnostic m
 - Phrase: "antoshka slushay" (translit).
 - Requires Vosk model and microphone permissions.
 
+## Notifications (Windows)
+
+- System notifications are shown for timers/alarms/reminders when enabled in Settings.
+- If notifications are blocked, enable them in Windows Settings:
+  `Settings > System > Notifications > Antoshka`.
+- Clicking a notification restores the app window.
+
 ## Tests
 
 ```bash
@@ -64,3 +76,30 @@ pytest
 pip install -r requirements-dev.txt
 python -m PyInstaller Antoshka_pyinstaller.spec
 ```
+
+## Release Build (Windows)
+
+Recommended:
+
+```powershell
+.\build.ps1
+```
+
+Onefile:
+
+```powershell
+.\build_onefile.ps1
+```
+
+Artifacts:
+
+- `dist/AntoshkaApp.exe`
+- `dist/AntoshkaApp_Windows.zip` (or `_onefile.zip`)
+
+Self-test:
+
+```powershell
+.\dist\AntoshkaApp.exe --self-test
+```
+
+Self-test logs: `logs/app.log`

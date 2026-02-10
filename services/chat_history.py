@@ -18,3 +18,8 @@ def append_chat(data_dir: Path, role: str, text: str) -> None:
         }
     )
     write_json(path, history)
+
+
+def clear_chat_history(data_dir: Path) -> None:
+    path = data_dir / "chat_history.json"
+    write_json(path, [])

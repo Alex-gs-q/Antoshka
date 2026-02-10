@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +20,8 @@ class VoskConfig:
     model_path: str = "models/vosk"
     samplerate: int = 16000
     device: Optional[int] = None
-    max_listen_seconds: int = 8
+    max_listen_seconds: int = 20
+    min_listen_seconds: float = 0.0
     silence_rms_threshold: float = 0.008  # tweak if needed
     silence_seconds_to_stop: float = 1.0
 
@@ -29,6 +31,7 @@ class VoskSTT:
         self.logger = setup_logger()
         self.config = config
         self._logged_listen = False
+        self._stop_event = threading.Event()
 
         mp = Path(config.model_path)
         if not mp.exists():
@@ -57,6 +60,8 @@ class VoskSTT:
         q: "queue.Queue[bytes]" = queue.Queue()
         started = time.time()
         last_voice_time = time.time()
+        self._stop_event.clear()
+        recognized_text: Optional[str] = None
 
         rec = KaldiRecognizer(self.model, self.config.samplerate)
         rec.SetWords(True)
@@ -64,6 +69,8 @@ class VoskSTT:
         def callback(indata, frames, time_info, status):
             if status:
                 self.logger.warning("sounddevice status: %s", status)
+            if self._stop_event.is_set():
+                raise sd.CallbackStop()
             q.put(bytes(indata))
 
         try:
@@ -78,8 +85,11 @@ class VoskSTT:
                 if not self._logged_listen:
                     self.logger.info("Vosk listening... (speak now)")
                     self._logged_listen = True
+                max_listen = max(float(self.config.max_listen_seconds), float(self.config.min_listen_seconds))
                 while True:
-                    if time.time() - started > self.config.max_listen_seconds:
+                    if self._stop_event.is_set():
+                        break
+                    if time.time() - started > max_listen:
                         break
 
                     data = self._safe_queue_get(q, timeout=1)
@@ -93,21 +103,37 @@ class VoskSTT:
                     if rms > self.config.silence_rms_threshold:
                         last_voice_time = time.time()
 
-                    rec.AcceptWaveform(data)
+                    if rec.AcceptWaveform(data):
+                        try:
+                            result = json.loads(rec.Result())
+                            text = (result.get("text") or "").strip()
+                            if text:
+                                recognized_text = text
+                                break
+                        except Exception as e:  # noqa: BLE001
+                            self.logger.debug("Vosk partial parse failed: %s", e)
 
                     if (
                         time.time() - last_voice_time
                         > self.config.silence_seconds_to_stop
+                        and time.time() - started >= float(self.config.min_listen_seconds)
                     ):
                         break
 
         except (KeyboardInterrupt, EOFError):
             return None
 
+        if recognized_text:
+            return recognized_text
+
         try:
             result = json.loads(rec.FinalResult())
             text = (result.get("text") or "").strip()
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            self.logger.debug("Vosk final parse failed: %s", e)
             text = ""
 
         return text
+
+    def stop(self) -> None:
+        self._stop_event.set()

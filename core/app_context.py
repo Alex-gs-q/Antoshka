@@ -17,3 +17,5 @@ class AppContext:
     llm_client: Optional[Any] = None
     registry: Optional[Any] = None
     on_settings_changed: Optional[Callable[[dict], None]] = None
+    language_mode: str = "auto"
+    language: str = "ru"

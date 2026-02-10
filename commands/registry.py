@@ -75,8 +75,9 @@ class CommandRegistry:
         raw = text or ""
         norm = normalize_text(text)
         for cmd in self._commands:
+            # Prefer matching raw text to preserve original slots (Cyrillic, paths, URLs).
             for pattern in cmd.patterns:
-                m = pattern.search(raw) or pattern.search(norm)
+                m = pattern.search(raw)
                 if not m:
                     continue
                 slots = {k: v for k, v in m.groupdict().items() if v is not None}
@@ -88,6 +89,23 @@ class CommandRegistry:
                     if not resolve_site(slots.get("site", ""), custom_sites):
                         continue
                 return MatchResult(command=cmd, slots=slots, confidence=0.92)
+            # Fallback to normalized text for transliterated or noisy input.
+            for pattern in cmd.patterns:
+                m = pattern.search(norm)
+                if not m:
+                    continue
+                slots = {k: v for k, v in m.groupdict().items() if v is not None}
+                if cmd.name == "open_url" and "site" in slots:
+                    site_text = normalize_text(slots.get("site", ""))
+                    if "prilozhenie" in site_text or "app" in site_text:
+                        continue
+                    custom_sites = (load_settings().get("custom_sites") or {})
+                    if not resolve_site(slots.get("site", ""), custom_sites):
+                        continue
+                return MatchResult(command=cmd, slots=slots, confidence=0.92)
+
+        # Triggers are a fallback if no patterns matched across all commands.
+        for cmd in self._commands:
             if cmd.triggers:
                 for trig in cmd.triggers:
                     if _words_in_text(trig, norm):

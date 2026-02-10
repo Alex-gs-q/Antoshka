@@ -1,14 +1,16 @@
 ﻿import sys
 
 from core.config import load_settings
-from core.actions import ActionResult
 from pathlib import Path
 
 from core.app_context import AppContext
 from core.dialogue import Dialogue, DialogueConfig
+from core.i18n import t as tr
+from core.language import resolve_language
 from core.logger import setup_logger
 from core.stt import create_stt
 from core.tts import TTS, TTSConfig
+from core.windows_appid import set_app_user_model_id
 from llm.client import LLMClient, LLMConfig
 from services.scheduler import Scheduler
 from services.volume import VolumeController
@@ -25,9 +27,19 @@ def _configure_stdio_utf8() -> None:
 
 
 def main():
+    set_app_user_model_id("Antoshka.Assistant")
     _configure_stdio_utf8()
     logger = setup_logger()
+    if "--self-test" in sys.argv:
+        try:
+            from tools.smoke_check import run_self_test
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Self-test import failed: %s", e)
+            raise SystemExit(1)
+        raise SystemExit(run_self_test())
     settings = load_settings()
+    lang_mode = (settings.get("app", {}) or {}).get("language", "auto")
+    current_lang = resolve_language(lang_mode, None, fallback="ru")
 
     # safety
     dangerous_mode = bool(settings.get("safety", {}).get("dangerous_mode", False))
@@ -62,7 +74,8 @@ def main():
         logger.warning("LLM disabled: %s", e)
 
     def notify(message: str) -> None:
-        print(f"Антошка: {message}")
+        prefix = tr("app_name", current_lang)
+        print(f"{prefix}: {message}")
         tts.say(message)
 
     scheduler = Scheduler(notify=notify)
@@ -81,6 +94,8 @@ def main():
         scheduler=scheduler,
         volume=volume,
         llm_client=llm_client,
+        language_mode=lang_mode,
+        language=current_lang,
     )
 
     dialogue = Dialogue(
@@ -94,26 +109,29 @@ def main():
     # STT
     stt = create_stt(settings)
 
-    hello = "текстовый режим. Напиши команду (или 'помощь'). Для выхода: 'выход'."
-    print(f"Антошка: {hello}")
+    hello = tr("msg_console_hello", current_lang)
+    print(f"{tr('app_name', current_lang)}: {hello}")
     tts.say(hello)
 
     while True:
         text = stt.listen()
 
         if text is None:
-            print("\nАнтошка: пока!")
-            tts.say("Пока!")
+            print(f"\n{tr('app_name', current_lang)}: {tr('msg_bye', current_lang)}")
+            tts.say(tr("msg_bye", current_lang))
             break
 
         if text == "":
             continue
 
-        answer = dialogue.handle_text(text)
+        lang = resolve_language(lang_mode, text, fallback=current_lang)
+        current_lang = lang
+        app_context.language = lang
+        answer = dialogue.handle_text(text, language=lang)
 
         if answer == "__EXIT__":
-            print("Антошка: пока!")
-            tts.say("Пока!")
+            print(f"{tr('app_name', current_lang)}: {tr('msg_bye', current_lang)}")
+            tts.say(tr("msg_bye", current_lang))
             break
 
         print(f"Антошка: {answer}")

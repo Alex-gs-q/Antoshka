@@ -45,7 +45,6 @@ class SafetyGate:
         self.confirm_ttl_seconds = int(confirm_ttl_seconds)
         self._confirm_until_ts: float = 0.0
 
-        # Жесткий запрет
         self.deny_types = {
             "delete_file",
             "format_disk",
@@ -54,14 +53,12 @@ class SafetyGate:
             "download_and_run_exe",
         }
 
-        # Требует подтверждение
         self.need_confirm_types = {
             "close_app",
             "open_system_folder",
             "note_delete",
         }
 
-        # Белый список разрешенных действий
         self.allow_types = {
             "help",
             "time",
@@ -72,7 +69,10 @@ class SafetyGate:
             "open_path",
             "run_app",
             "open_app",
+            "open_mail",
+            "open_calendar",
             "search_web",
+            "weather",
             "note_create",
             "timer_set",
             "reminder_set",
@@ -81,17 +81,28 @@ class SafetyGate:
             "tts_test",
             "note_list",
             "note_delete",
+            "note_update",
+            "note_replace",
             "alarm_set",
             "open_map",
             "screenshot",
             "settings_wake",
             "settings_tts",
+            "settings_language",
+            "settings_theme",
+            "settings_accent",
+            "settings_bg_intensity",
+            "settings_tts_rate",
+            "settings_tts_volume",
+            "clear_chat",
+            "event_add",
+            "event_list",
         }
 
     def confirm(self, phrase: str) -> bool:
         """Пользователь сказал фразу подтверждения."""
         p = (phrase or "").strip().lower()
-        if p == self.confirm_phrase:
+        if p in {self.confirm_phrase, "подтверждаю", "confirm"}:
             self._confirm_until_ts = time() + self.confirm_ttl_seconds
             self.logger.info(
                 "Safety confirm accepted, ttl=%ss", self.confirm_ttl_seconds
@@ -107,30 +118,26 @@ class SafetyGate:
         """Возвращает решение безопасности."""
         a_type = action.type
 
-        # 1) Жесткий deny
         if a_type in self.deny_types:
             self.logger.warning(
                 "Safety DENY action=%s payload=%s", a_type, action.payload
             )
-            return SafetyResult(SafetyDecision.DENY, "Запрещено политикой безопасности")
+            return SafetyResult(SafetyDecision.DENY, "blocked")
 
-        # 2) Неизвестный тип — запрещаем (fail-closed)
         if a_type not in self.allow_types and a_type not in self.need_confirm_types:
             self.logger.warning(
                 "Safety DENY unknown action=%s payload=%s", a_type, action.payload
             )
-            return SafetyResult(SafetyDecision.DENY, "Неизвестное действие")
+            return SafetyResult(SafetyDecision.DENY, "unknown")
 
-        # 3) dangerous_mode
         if self.dangerous_mode:
             self.logger.info(
                 "Safety ALLOW (dangerous_mode) action=%s payload=%s",
                 a_type,
                 action.payload,
             )
-            return SafetyResult(SafetyDecision.ALLOW, "dangerous_mode=true")
+            return SafetyResult(SafetyDecision.ALLOW, "dangerous_mode")
 
-        # 4) Нужна явная конфирма
         if a_type in self.need_confirm_types:
             if self._has_valid_confirm():
                 self.logger.info(
@@ -138,14 +145,11 @@ class SafetyGate:
                     a_type,
                     action.payload,
                 )
-                return SafetyResult(SafetyDecision.ALLOW, "Подтверждено пользователем")
+                return SafetyResult(SafetyDecision.ALLOW, "confirmed")
             self.logger.info(
                 "Safety NEED_CONFIRM action=%s payload=%s", a_type, action.payload
             )
-            return SafetyResult(
-                SafetyDecision.NEED_CONFIRM, "Нужно подтверждение: скажи 'подтверждаю'"
-            )
+            return SafetyResult(SafetyDecision.NEED_CONFIRM, "need_confirm")
 
-        # 5) Обычные разрешенные действия
         self.logger.info("Safety ALLOW action=%s payload=%s", a_type, action.payload)
-        return SafetyResult(SafetyDecision.ALLOW, "Разрешено")
+        return SafetyResult(SafetyDecision.ALLOW, "allowed")

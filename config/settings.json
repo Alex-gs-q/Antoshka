@@ -2,21 +2,30 @@
   "app": {
     "name": "Антошка",
     "language": "ru",
-    "log_level": "INFO"
+    "log_level": "INFO",
+    "debug": false
   },
   "stt": {
-    "mode": "vosk",
+    "mode": "auto",
     "vosk_model_path": "models/vosk",
-    "device": 1
+    "vosk_model_path_ru": "models/vosk",
+    "vosk_model_path_en": "models/vosk_en",
+    "device": 1,
+    "language": "ru",
+    "min_listen_seconds": 12.0,
+    "max_listen_seconds": 20,
+    "silence_seconds_to_stop": 1.0
   },
   "tts": {
     "enabled": true,
-    "provider": "pyttsx3",
-    "voice": "ru-RU-DmitryNeural",
-    "rate": 151,
+    "provider": "auto",
+    "rate": 148,
     "volume": 1.0,
-    "pitch": 50,
-    "voice_name_contains": null
+    "pitch": 20,
+    "voice_ru": "ru-RU-DmitryNeural",
+    "voice_en": "en-GB-SoniaNeural",
+    "voice_name_contains_ru": "ru-RU-DmitryNeural",
+    "voice_name_contains_en": "en-GB-SoniaNeural"
   },
   "safety": {
     "dangerous_mode": false,
@@ -37,8 +46,25 @@
     "ai_mode": false,
     "voice_filter_lang": "RU",
     "voice_filter_gender": "Male",
+    "theme_preset": "neon",
+    "accent_color": "#7dd3fc",
+    "background_intensity": 0.48,
+    "show_start_screen": true,
+    "voice_response_timeout_sec": 7,
+    "alerts_enabled": true,
+    "alerts_sound": "Music/Kioko - The Phantom Traveler.mp3",
+    "alerts_volume": 80,
+    "alerts_loop": true,
+    "snooze_default_minutes": 5,
+    "snooze_quick_enabled": true,
+    "snooze_quick_buttons": [1, 3, 5, 10, 15],
+    "snooze_dropdown_enabled": true,
+    "snooze_dropdown_options": [1, 3, 5, 10, 15, 30],
+    "timer_restart_enabled": true,
+    "system_notifications": true,
+    "notify_show_text": true,
+    "notify_show_icon": true,
     "banner_hidden": false,
-    "preferred_stt_mode": "vosk",
-    "theme": "auto"
+    "preferred_stt_mode": "vosk"
   }
 }

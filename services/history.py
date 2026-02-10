@@ -18,3 +18,8 @@ def append_history(data_dir: Path, role: str, text: str) -> None:
         }
     )
     write_json(path, history)
+
+
+def clear_history(data_dir: Path) -> None:
+    path = data_dir / "history.json"
+    write_json(path, [])

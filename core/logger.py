@@ -14,6 +14,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
 
     # чтобы не дублировались хендлеры при повторном вызове
     if logger.handlers:
+        logger.setLevel(getattr(logging, level.upper(), logging.INFO))
         _ensure_app_log_handler(logger)
         return logger
 
