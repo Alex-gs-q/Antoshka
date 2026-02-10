@@ -9,7 +9,6 @@ from typing import Callable, Optional
 
 import numpy as np
 import sounddevice as sd
-from vosk import KaldiRecognizer, Model
 
 from core.logger import setup_logger
 
@@ -30,7 +29,15 @@ class WakeWordListener:
         self.on_wake = on_wake
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self._model: Optional[Model] = None
+        self._model = None
+        self._KaldiRecognizer = None
+
+        try:
+            from vosk import KaldiRecognizer, Model  # type: ignore
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"Vosk unavailable: {e}") from e
+
+        self._KaldiRecognizer = KaldiRecognizer
 
         mp = Path(config.model_path)
         if not mp.exists():
@@ -49,10 +56,10 @@ class WakeWordListener:
         self._stop.set()
 
     def _run(self) -> None:
-        if self._model is None:
+        if self._model is None or self._KaldiRecognizer is None:
             return
         grammar = json.dumps(list(self.config.wake_phrases), ensure_ascii=False)
-        rec = KaldiRecognizer(self._model, self.config.samplerate, grammar)
+        rec = self._KaldiRecognizer(self._model, self.config.samplerate, grammar)
         rec.SetWords(True)
 
         def callback(indata, frames, time_info, status):
