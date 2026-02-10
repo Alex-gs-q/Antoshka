@@ -1,18 +1,21 @@
 import logging
 from logging.handlers import RotatingFileHandler
+import os
 from pathlib import Path
+import sys
+import tempfile
 
 
 def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
     """
-    Создает и возвращает логгер.
-    Пишет:
-    - в консоль
-    - в logs/antoshka.log (с ротацией)
+    Creates and returns a logger.
+    Writes:
+    - to console
+    - to logs/app.log (rotating)
     """
     logger = logging.getLogger(name)
 
-    # чтобы не дублировались хендлеры при повторном вызове
+    # avoid duplicate handlers
     if logger.handlers:
         logger.setLevel(getattr(logging, level.upper(), logging.INFO))
         _ensure_app_log_handler(logger)
@@ -20,7 +23,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
 
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
 
-    logs_dir = Path("logs")
+    logs_dir = _get_logs_dir()
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_file = logs_dir / "antoshka.log"
     app_log_file = logs_dir / "app.log"
@@ -30,12 +33,10 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Консоль
     console = logging.StreamHandler()
     console.setFormatter(fmt)
     logger.addHandler(console)
 
-    # Файл с ротацией (1MB * 3 файла)
     file_handler = RotatingFileHandler(
         filename=str(log_file),
         maxBytes=1_000_000,
@@ -44,6 +45,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
     )
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)
+
     app_file_handler = RotatingFileHandler(
         filename=str(app_log_file),
         maxBytes=1_000_000,
@@ -59,7 +61,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
 
 
 def _ensure_app_log_handler(logger: logging.Logger) -> None:
-    logs_dir = Path("logs")
+    logs_dir = _get_logs_dir()
     logs_dir.mkdir(parents=True, exist_ok=True)
     app_log_file = str(logs_dir / "app.log")
     for handler in logger.handlers:
@@ -78,3 +80,13 @@ def _ensure_app_log_handler(logger: logging.Logger) -> None:
     )
     app_file_handler.setFormatter(fmt)
     logger.addHandler(app_file_handler)
+
+
+def _get_logs_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / "Antoshka" / "logs"
+    try:
+        return Path("logs").resolve()
+    except Exception:
+        return Path(tempfile.gettempdir()) / "Antoshka" / "logs"

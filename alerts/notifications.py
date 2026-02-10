@@ -11,9 +11,16 @@ try:  # optional winrt
     from winrt.windows.ui.notifications import ToastNotificationManager, ToastNotification
     from winrt.windows.data.xml.dom import XmlDocument
 except Exception:  # noqa: BLE001
-    ToastNotificationManager = None
-    ToastNotification = None
-    XmlDocument = None
+    try:  # fallback to winsdk
+        from winsdk.windows.ui.notifications import (  # type: ignore
+            ToastNotificationManager,
+            ToastNotification,
+        )
+        from winsdk.windows.data.xml.dom import XmlDocument  # type: ignore
+    except Exception:  # noqa: BLE001
+        ToastNotificationManager = None
+        ToastNotification = None
+        XmlDocument = None
 
 
 @dataclass(frozen=True)
