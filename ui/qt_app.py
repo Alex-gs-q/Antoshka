@@ -1203,15 +1203,11 @@ class AntoshkaWindow(QMainWindow):
                     self._alert_snooze(event_id, default_min)
                     handled = True
             if handled:
-                msg = "Оповещение обработано."
-                if (self.language or "ru").lower() == "en":
-                    msg = "Alert handled."
-                self._notify(msg)
-            else:
-                msg = "Событие не найдено."
-                if (self.language or "ru").lower() == "en":
-                    msg = "Event not found."
-                self._notify(msg)
+            msg = tr("msg_alert_handled", self.language)
+            self._notify(msg)
+        else:
+            msg = tr("msg_event_not_found", self.language)
+            self._notify(msg)
 
         QTimer.singleShot(0, _run)
 
@@ -2060,9 +2056,7 @@ class AntoshkaWindow(QMainWindow):
             save_settings(self.settings)
             msg = tr("msg_wake_unavailable", self.language)
             if isinstance(e, (FileNotFoundError, RuntimeError)):
-                msg = "Модель распознавания речи не найдена. Установите модели Vosk."
-                if (self.language or "ru").lower() == "en":
-                    msg = "Speech model not found. Install Vosk models."
+                msg = tr("msg_stt_model_missing", self.language)
             self._notify(msg)
 
     def _handle_wake(self, phrase: str | None = None) -> None:

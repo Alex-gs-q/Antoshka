@@ -260,7 +260,9 @@ _UI: Dict[str, Dict[str, str]] = {
     "state_on": {"ru": "вкл", "en": "on"},
     "state_off": {"ru": "выкл", "en": "off"},
     "map_default_name": {"ru": "Яндекс Карты", "en": "Yandex Maps"},
-    "msg_alerts_disabled": {"ru": "??? ?????????? ?????????.", "en": "All alerts disabled."},
+    "msg_alerts_disabled": {"ru": "Все оповещения отключены.", "en": "All alerts disabled."},
+    "msg_alert_handled": {"ru": "Оповещение обработано.", "en": "Alert handled."},
+    "msg_event_not_found": {"ru": "Событие не найдено.", "en": "Event not found."},
 }
 
 
