@@ -2049,9 +2049,28 @@ class AntoshkaWindow(QMainWindow):
             self.log.exception("Self-check failed: %s", e)
 
 
-def run() -> None:
+def _parse_notification_args(arg: str) -> tuple[str, str, str] | None:
+    if not arg:
+        return None
+    parts = dict(item.split("=", 1) for item in arg.split(";") if "=" in item)
+    action = parts.get("action", "")
+    event_id = parts.get("id", "")
+    event_type = parts.get("type", "")
+    if not action or not event_id or not event_type:
+        return None
+    return action, event_id, event_type
+
+
+def run(activation_args: str | None = None) -> None:
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     window = AntoshkaWindow()
+    if activation_args:
+        parsed = _parse_notification_args(activation_args)
+        if parsed:
+            action, event_id, event_type = parsed
+            QTimer.singleShot(
+                0, lambda: window._on_notification_action(action, event_id, event_type)
+            )
     window.show()
     sys.exit(app.exec())
