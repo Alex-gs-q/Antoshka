@@ -260,6 +260,7 @@ _UI: Dict[str, Dict[str, str]] = {
     "state_on": {"ru": "вкл", "en": "on"},
     "state_off": {"ru": "выкл", "en": "off"},
     "map_default_name": {"ru": "Яндекс Карты", "en": "Yandex Maps"},
+    "msg_alerts_disabled": {"ru": "??? ?????????? ?????????.", "en": "All alerts disabled."},
 }
 
 

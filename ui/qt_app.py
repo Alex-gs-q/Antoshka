@@ -478,6 +478,15 @@ class AntoshkaWindow(QMainWindow):
         tray_icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
         self.tray = QSystemTrayIcon(tray_icon, self)
         self.tray.messageClicked.connect(self._restore_window)
+        menu = QMenu()
+        stop_all = QAction(tr("btn_alert_stop", self.language), self)
+        stop_all.triggered.connect(self._alert_stop_all)
+        menu.addAction(stop_all)
+        menu.addSeparator()
+        quit_action = QAction(tr("btn_stop", self.language), self)
+        quit_action.triggered.connect(self.close)
+        menu.addAction(quit_action)
+        self.tray.setContextMenu(menu)
         self.tray.show()
         self.notifier = NotificationService(
             app_id="Antoshka.Assistant",
@@ -1114,6 +1123,18 @@ class AntoshkaWindow(QMainWindow):
         self._active_alert_meta = None
         self.log.info("ALERT stop id=%s reason=%s", event_id, reason)
 
+    def _alert_stop_all(self) -> None:
+        self._stop_alert_sound()
+        count = self.app_context.scheduler.dismiss_all()
+        for event_id in list(self._event_cards.keys()):
+            self._update_event_card(event_id, tr("msg_alert_stopped", self.language))
+        if count:
+            msg = "Все оповещения отключены."
+            if (self.language or "ru").lower() == "en":
+                msg = "All alerts disabled."
+            self._notify(msg)
+        self.log.info("ALERT stop_all count=%s", count)
+
     def _update_event_card(self, event_id: str, status: str) -> None:
         item = self._event_cards.get(event_id)
         if not item:
@@ -1161,19 +1182,34 @@ class AntoshkaWindow(QMainWindow):
 
     def _on_notification_action(self, action: str, event_id: str, event_type: str) -> None:
         def _run() -> None:
+            handled = False
             if action == "stop":
-                self._alert_stop(event_id, "notification")
-                return
-            if action == "repeat":
+                if self.app_context.scheduler.get_event(event_id) is None:
+                    self.log.warning("Notification action: event not found id=%s", event_id)
+                else:
+                    self._alert_stop(event_id, "notification")
+                    handled = True
+            elif action == "repeat":
                 event = self.app_context.scheduler.get_event(event_id)
                 if event is None:
                     self.log.warning("Notification action: event not found id=%s", event_id)
-                    return
-                if event_type == "timer":
+                elif event_type == "timer":
                     self._alert_restart(event)
+                    handled = True
                 else:
                     default_min = int(get_alert_settings(self.settings).get("snooze_default_minutes", 5))
                     self._alert_snooze(event_id, default_min)
+                    handled = True
+            if handled:
+                msg = "Оповещение обработано."
+                if (self.language or "ru").lower() == "en":
+                    msg = "Alert handled."
+                self._notify(msg)
+            else:
+                msg = "Событие не найдено."
+                if (self.language or "ru").lower() == "en":
+                    msg = "Event not found."
+                self._notify(msg)
 
         QTimer.singleShot(0, _run)
 
@@ -2018,7 +2054,14 @@ class AntoshkaWindow(QMainWindow):
             self.wake_listener.start()
         except Exception as e:  # noqa: BLE001
             self.log.warning("Wake word disabled: %s", e)
-            self._notify(tr("msg_wake_unavailable", self.language))
+            self.settings.setdefault("ui", {})["wake_word"] = False
+            save_settings(self.settings)
+            msg = tr("msg_wake_unavailable", self.language)
+            if isinstance(e, (FileNotFoundError, RuntimeError)):
+                msg = "Модель распознавания речи не найдена. Установите модели Vosk."
+                if (self.language or "ru").lower() == "en":
+                    msg = "Speech model not found. Install Vosk models."
+            self._notify(msg)
 
     def _handle_wake(self, phrase: str | None = None) -> None:
         self.showNormal()

@@ -46,6 +46,16 @@ class AlertScheduler:
         self.log.info("ALERT dismiss id=%s", event_id)
         return True
 
+    def dismiss_all(self) -> int:
+        with self._lock:
+            ids = list(self._events.keys())
+        count = 0
+        for event_id in ids:
+            if self.dismiss_event(event_id):
+                count += 1
+        self.log.info("ALERT dismiss_all count=%s", count)
+        return count
+
     def restart_timer(self, event_id: str) -> Optional[str]:
         with self._lock:
             event = self._events.get(event_id)

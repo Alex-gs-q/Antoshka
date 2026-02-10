@@ -38,3 +38,6 @@ class Scheduler:
 
     def restart_timer(self, event_id: str) -> str | None:
         return self._scheduler.restart_timer(event_id)
+
+    def dismiss_all(self) -> int:
+        return self._scheduler.dismiss_all()
