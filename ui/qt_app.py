@@ -32,6 +32,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
+    QAction,
     QPushButton,
     QProgressBar,
     QScrollArea,
