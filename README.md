@@ -2,6 +2,31 @@
 
 Voice assistant with CLI and desktop UI.
 
+## Release Status
+
+- Current channel: **Alpha**
+- Intended use: demo/defense and limited pilot usage
+- Not yet intended for production-critical workflows
+
+### Alpha Notes
+
+- Preferred build for end users: folder build (`dist/AntoshkaApp/AntoshkaApp.exe`)
+- Onefile build may fail on some Windows setups before Python starts (bootloader temp extraction issue)
+- If onefile fails, use folder build or installer package from `release/`
+
+## For Defense / Demo
+
+Recommended package:
+
+- `release/AntoshkaApp_installer_ready.zip`
+
+Quick demo checks:
+
+1. Launch app
+2. Run `--self-test` (headless)
+3. Run `--smoke` (headless)
+4. Show RU/EN switch + timer + help
+
 ## Run
 
 CLI:
