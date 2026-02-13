@@ -21,7 +21,8 @@ def _get_help(lang: str) -> str:
     app_context.registry = registry
     cmd = registry.get("help")
     ctx = CommandContext(text="help", slots={}, app_context=app_context)
-    return cmd.handler(ctx)
+    res = cmd.handler(ctx)
+    return res.text if hasattr(res, "text") else str(res)
 
 
 def test_help_ru_no_latin() -> None:

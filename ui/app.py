@@ -22,6 +22,7 @@ from tkinter import font as tkfont
 
 from core.app_context import AppContext
 from core.config import load_settings, save_settings
+from core.paths import data_dir
 from core.dialogue import Dialogue, DialogueConfig
 from core.logger import setup_logger
 from core.stt import TextSTT, create_stt
@@ -70,7 +71,7 @@ class AntoshkaUI:
 
         self.app_context = AppContext(
             notify=self._notify,
-            data_dir=Path("data"),
+            data_dir=data_dir(),
             scheduler=self.scheduler,
             volume=volume,
             llm_client=self.llm_client,
@@ -104,8 +105,8 @@ class AntoshkaUI:
         style = ttk.Style()
         try:
             style.theme_use("clam")
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            self.logger.exception("Theme apply failed: %s", e)
 
         style.configure("TFrame", background="#141824")
         style.configure("TLabel", background="#141824", foreground="#e6e8ff")
@@ -393,8 +394,8 @@ class AntoshkaUI:
         self.listening = False
         try:
             self.stt.stop()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            self.logger.exception("STT stop failed: %s", e)
         self._set_status("остановлено")
 
     def _on_listen_result(self, token: int, text: str | None) -> None:
@@ -490,7 +491,7 @@ class AntoshkaUI:
         win.title("История")
         win.geometry("520x420")
 
-        history = read_json(Path("data") / "history.json", default=[])
+        history = read_json(data_dir() / "history.json", default=[])
         box = Text(win, wrap="word")
         box.pack(fill=BOTH, expand=True)
         for item in history:

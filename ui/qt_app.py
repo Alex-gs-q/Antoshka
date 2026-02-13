@@ -8,13 +8,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QPoint, QSize, QTimer, QUrl, QEasingCurve, QPropertyAnimation, QParallelAnimationGroup
+from PySide6.QtCore import (
+    Qt,
+    QPoint,
+    QRect,
+    QSize,
+    QTimer,
+    QUrl,
+    QEasingCurve,
+    QPropertyAnimation,
+    QParallelAnimationGroup,
+)
 from PySide6.QtGui import (
+    QAction,
     QBrush,
     QColor,
     QFont,
     QIcon,
     QLinearGradient,
+    QGuiApplication,
+    QPalette,
     QPainter,
     QPainterPath,
     QPen,
@@ -26,6 +39,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -33,7 +47,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMenu,
-    QAction,
+    QListWidget,
     QPushButton,
     QProgressBar,
     QScrollArea,
@@ -44,8 +58,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QStackedWidget,
+    QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QSystemTrayIcon,
+    QStyle,
 )
 
 from core.actions import ActionResult
@@ -53,9 +69,20 @@ from core.app_context import AppContext
 from core.config import load_settings, save_settings
 from core.dialogue import Dialogue, DialogueConfig
 from core.language import normalize_language_mode, resolve_language
-from core.i18n import t as tr, examples as sample_examples
+from core.i18n import (
+    t as tr,
+    examples as sample_examples,
+    command_name,
+    command_desc,
+    check_i18n_integrity,
+    about_capabilities,
+    about_examples,
+)
+from core.suggestions import pick_suggestions
+from core.version import __version__
 from core.logger import setup_logger
 from core.resources import resource_path
+from core.paths import data_dir, logs_dir
 from core.stt import TextSTT, create_stt
 from core.wake_word import WakeWordListener, WakeWordConfig
 from llm.client import LLMClient, LLMConfig
@@ -64,6 +91,7 @@ from services.scheduler import Scheduler
 from services.storage import read_json
 from services.history import clear_history
 from services.volume import VolumeController
+from services.time_parse import parse_time_of_day
 from services.audio.microphone import list_input_devices, MicLevelMonitor, test_microphone
 from alerts.audio_alerts import AudioAlerts
 from alerts.models import Event
@@ -154,6 +182,7 @@ class ChatBubble(QFrame):
         label.setObjectName("BubbleText")
         layout.addWidget(label)
         if action_widget is not None:
+            action_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             layout.addWidget(action_widget)
         if is_user:
             self.setProperty("kind", "user")
@@ -253,13 +282,42 @@ class EventCardWidget(QFrame):
         subtitle: str,
         when_text: str,
         buttons_row: QWidget,
+        debug_overlay: bool = False,
     ):
         super().__init__()
         self.setObjectName("EventCard")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setProperty("alert", True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShadow(QFrame.Raised)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self._debug_overlay = debug_overlay
+        self._buttons_widget = buttons_row
         self._pulse_anim: QPropertyAnimation | None = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(3)
+
+        header = QFrame()
+        header.setObjectName("AlertHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header.setAutoFillBackground(True)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(6, 3, 6, 3)
+        header_layout.setSpacing(4)
+        header_label = QLabel("ALERT")
+        header_label.setObjectName("AlertHeaderText")
+        header_layout.addWidget(header_label)
+        header_layout.addStretch(1)
+        layout.addWidget(header)
+
+        if self._debug_overlay:
+            dbg = QLabel("DEBUG")
+            dbg.setObjectName("AlertDebugBadge")
+            layout.addWidget(dbg)
 
         title_lbl = QLabel(title)
         title_lbl.setObjectName("EventTitle")
@@ -279,14 +337,71 @@ class EventCardWidget(QFrame):
         self._status.setObjectName("EventStatus")
         layout.addWidget(self._status)
 
+        buttons_row.setAttribute(Qt.WA_StyledBackground, True)
+        buttons_row.setAutoFillBackground(True)
+        buttons_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         layout.addWidget(buttons_row)
 
         effect = QGraphicsOpacityEffect(self)
         effect.setOpacity(1.0)
         self.setGraphicsEffect(effect)
+        self.setMinimumHeight(0)
+        self._apply_alert_style()
+
+    def _apply_alert_style(self) -> None:
+        pal = self.palette()
+        pal.setColor(QPalette.Window, QColor("#0B1220"))
+        pal.setColor(QPalette.WindowText, QColor("#EAF1FF"))
+        self.setPalette(pal)
+        self.setStyleSheet(
+            """
+            #EventCard {
+                background: #0B1220;
+                border: 2px solid #4CC9FF;
+                border-radius: 12px;
+            }
+            #AlertHeader {
+                background: #4CC9FF;
+                border-radius: 8px;
+            }
+            #AlertHeaderText { color: #0B1220; font-weight: 800; }
+            #EventTitle { color: #EAF1FF; }
+            #EventSubtitle { color: #EAF1FF; }
+            #EventWhen { color: #BBD0F5; }
+            #EventStatus { color: #7CD7FF; }
+            #AlertDebugBadge { color: #FF4D4D; font-size: 10px; font-weight: 700; }
+            #EventButtons {
+                background: #0F213A;
+                border: 2px solid #7CD7FF;
+                border-radius: 12px;
+            }
+            #EventButtons[debug="true"] { border: 2px solid #FF4D4D; }
+            #EventCard QPushButton {
+                background: #173153;
+                border: 2px solid #7CD7FF;
+                border-radius: 8px;
+                padding: 6px 10px;
+                color: #EAF1FF;
+            }
+            #EventCard QPushButton:hover { border-color: #9BE6FF; background: #1E3B63; }
+            #EventCard QPushButton:pressed { background: #0E1A2B; }
+            #EventCard QPushButton:disabled {
+                background: #2A2A2A; border-color: #555555; color: #999999;
+            }
+            """
+        )
 
     def set_status(self, text: str) -> None:
         self._status.setText(text)
+        if text:
+            self._status.show()
+            if self._buttons_widget is not None:
+                self._buttons_widget.hide()
+        else:
+            self._status.hide()
+            if self._buttons_widget is not None:
+                self._buttons_widget.show()
+        self.adjustSize()
 
     def set_alerting(self, active: bool) -> None:
         effect = self.graphicsEffect()
@@ -307,6 +422,860 @@ class EventCardWidget(QFrame):
                 self._pulse_anim.stop()
                 self._pulse_anim = None
             effect.setOpacity(1.0)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if not self._debug_overlay:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor("#ff4d4d"), 1.2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+        if self._buttons_widget is not None:
+            rect = self._buttons_widget.geometry()
+            painter.drawRect(rect.adjusted(1, 1, -2, -2))
+
+
+class WrapGridWidget(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self._items: list[QWidget] = []
+        self._layout = QGridLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+
+    def clear(self) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._items.clear()
+
+    def add_widget(self, widget: QWidget) -> None:
+        self._items.append(widget)
+        self._layout.addWidget(widget, 0, max(0, self._layout.count()))
+        self._relayout()
+
+    def set_spacing(self, value: int) -> None:
+        self._layout.setSpacing(int(value))
+        self._relayout()
+
+    def _relayout(self) -> None:
+        if not self._items:
+            return
+        for idx in reversed(range(self._layout.count())):
+            item = self._layout.itemAt(idx)
+            if item is not None:
+                self._layout.removeItem(item)
+        spacing = max(0, int(self._layout.spacing()))
+        max_width = max(1, max(widget.sizeHint().width() for widget in self._items))
+        available = max(1, int(self.width()))
+        columns = max(1, (available + spacing) // (max_width + spacing))
+        row = 0
+        col = 0
+        for widget in self._items:
+            self._layout.addWidget(widget, row, col)
+            col += 1
+            if col >= columns:
+                col = 0
+                row += 1
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout()
+
+
+class HelpChipButton(QPushButton):
+    def __init__(self, text: str, on_insert, on_send) -> None:
+        super().__init__(text)
+        self._on_insert = on_insert
+        self._on_send = on_send
+        self.setObjectName("HelpChip")
+        self.setCursor(Qt.PointingHandCursor)
+        self.clicked.connect(lambda: self._on_insert(text))
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self._on_send(self.text())
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class SuggestionChipButton(QPushButton):
+    def __init__(self, text: str, on_insert, on_send, on_log) -> None:
+        super().__init__(text)
+        self._on_insert = on_insert
+        self._on_send = on_send
+        self._on_log = on_log
+        self._send_on_click = False
+        self._tip_insert = ""
+        self._tip_send = ""
+        self.setObjectName("SuggestionChip")
+        self.setCursor(Qt.PointingHandCursor)
+        self.clicked.connect(self._handle_click)
+
+    def set_send_on_click(self, value: bool) -> None:
+        self._send_on_click = bool(value)
+        self._update_tooltip()
+
+    def set_tooltips(self, insert_tip: str, send_tip: str) -> None:
+        self._tip_insert = insert_tip or ""
+        self._tip_send = send_tip or ""
+        self._update_tooltip()
+
+    def _update_tooltip(self) -> None:
+        tip = self._tip_send if self._send_on_click else self._tip_insert
+        self.setToolTip(tip)
+
+    def _handle_click(self) -> None:
+        mode = "send" if self._send_on_click else "insert"
+        if self._on_log is not None:
+            self._on_log(self.text(), mode)
+        if self._send_on_click:
+            self._on_send(self.text())
+        else:
+            self._on_insert(self.text())
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            if self._on_log is not None:
+                self._on_log(self.text(), "send")
+            self._on_send(self.text())
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class SuggestionChipsWidget(QFrame):
+    def __init__(self, on_insert, on_send, on_log) -> None:
+        super().__init__()
+        self.setObjectName("SuggestionsBar")
+        self._on_insert = on_insert
+        self._on_send = on_send
+        self._on_log = on_log
+        self._chips: list[SuggestionChipButton] = []
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+        self._wrap = WrapGridWidget()
+        self._wrap.setObjectName("SuggestionWrap")
+        self._wrap.set_spacing(8)
+        layout.addWidget(self._wrap)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        fm = self.fontMetrics()
+        row_h = fm.height() + 14
+        self.setMinimumHeight(row_h + 10)
+        self.setMaximumHeight(row_h * 2 + 20)
+
+    def set_suggestions(
+        self,
+        items: list[str],
+        send_on_click: bool,
+        tip_insert: str,
+        tip_send: str,
+    ) -> None:
+        self._wrap.clear()
+        self._chips.clear()
+        for text in items[:5]:
+            btn = SuggestionChipButton(text, self._on_insert, self._on_send, self._on_log)
+            btn.set_send_on_click(send_on_click)
+            btn.set_tooltips(tip_insert, tip_send)
+            self._chips.append(btn)
+            self._wrap.add_widget(btn)
+        self._wrap.updateGeometry()
+        self.adjustSize()
+
+
+class HelpSectionWidget(QFrame):
+    def __init__(self, title: str, desc: str, icon: str, examples: list[str], on_insert, on_send) -> None:
+        super().__init__()
+        self.setObjectName("HelpSection")
+        self._title = title
+        self._desc = desc
+        self._examples = examples
+        self._chips: list[HelpChipButton] = []
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        icon_lbl = QLabel(icon or "")
+        icon_lbl.setObjectName("HelpSectionIcon")
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("HelpSectionTitle")
+        title_row.addWidget(icon_lbl)
+        title_row.addWidget(title_lbl)
+        title_row.addStretch(1)
+        desc_lbl = QLabel(desc)
+        desc_lbl.setObjectName("HelpSectionDesc")
+        desc_lbl.setWordWrap(True)
+        layout.addLayout(title_row)
+        layout.addWidget(desc_lbl)
+        chips = WrapGridWidget()
+        chips.setObjectName("HelpChips")
+        chips.set_spacing(6)
+        for ex in examples:
+            btn = HelpChipButton(ex, on_insert, on_send)
+            self._chips.append(btn)
+            chips.add_widget(btn)
+        layout.addWidget(chips)
+
+    def apply_filter(self, query: str) -> bool:
+        q = (query or "").strip().lower()
+        if not q:
+            for chip in self._chips:
+                chip.show()
+            self.show()
+            return True
+        hay = f"{self._title} {self._desc}".lower()
+        title_match = q in hay
+        any_chip = False
+        for chip in self._chips:
+            match = q in chip.text().lower()
+            chip.setVisible(title_match or match)
+            if title_match or match:
+                any_chip = True
+        self.setVisible(any_chip or title_match)
+        return any_chip or title_match
+
+
+class HelpWidget(QWidget):
+    def __init__(self, sections: list[dict], lang: str, on_insert, on_send) -> None:
+        super().__init__()
+        self.setObjectName("HelpCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        self.search = QLineEdit()
+        self.search.setObjectName("HelpSearch")
+        self.search.setPlaceholderText(tr("help_search", lang))
+        self.execute_btn = QPushButton(tr("help_execute", lang))
+        self.execute_btn.setObjectName("HelpExecute")
+        search_row.addWidget(self.search, stretch=1)
+        search_row.addWidget(self.execute_btn)
+        layout.addLayout(search_row)
+        self.sections_box = QVBoxLayout()
+        self.sections_box.setSpacing(10)
+        self._sections: list[HelpSectionWidget] = []
+        for sec in sections:
+            widget = HelpSectionWidget(
+                str(sec.get("title", "")),
+                str(sec.get("desc", "")),
+                str(sec.get("icon", "")),
+                list(sec.get("examples", [])),
+                on_insert,
+                on_send,
+            )
+            self._sections.append(widget)
+            layout.addWidget(widget)
+        layout.addStretch(1)
+        self.search.textChanged.connect(self._on_search)
+        self.search.returnPressed.connect(lambda: on_send(self.search.text().strip()))
+        self.execute_btn.clicked.connect(lambda: on_send(self.search.text().strip()))
+
+    def set_language(self, lang: str) -> None:
+        self.search.setPlaceholderText(tr("help_search", lang))
+
+    def _on_search(self, text: str) -> None:
+        for sec in self._sections:
+            sec.apply_filter(text)
+
+
+class HelpCommandCard(QFrame):
+    def __init__(self, item: dict, lang: str, on_insert, on_send) -> None:
+        super().__init__()
+        self.setObjectName("HelpCommandCard")
+        self._lang = lang
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        title = QLabel(str(item.get("title", "")))
+        title.setObjectName("HelpCommandTitle")
+        layout.addWidget(title)
+
+        desc = QLabel(str(item.get("desc", "")))
+        desc.setObjectName("HelpCommandDesc")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        examples = list(item.get("examples", []))[:2]
+        for ex in examples:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            label = QLabel(str(ex))
+            label.setObjectName("HelpExampleText")
+            label.setWordWrap(True)
+            row.addWidget(label, stretch=1)
+
+            insert_btn = QPushButton(tr("help_insert", lang))
+            insert_btn.setObjectName("HelpExampleInsert")
+            insert_btn.clicked.connect(lambda _, text=ex: on_insert(text))
+            row.addWidget(insert_btn)
+
+            run_btn = QPushButton(tr("help_execute", lang))
+            run_btn.setObjectName("HelpExampleRun")
+            run_btn.clicked.connect(lambda _, text=ex: on_send(text))
+            row.addWidget(run_btn)
+
+            layout.addLayout(row)
+
+
+class HelpOverlay(QDialog):
+    def __init__(self, parent: QWidget, items: list[dict], lang: str, on_insert, on_send) -> None:
+        super().__init__(parent)
+        self.setObjectName("HelpOverlay")
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setModal(True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._items = list(items)
+        self._lang = lang
+        self._on_insert = on_insert
+        self._on_send = on_send
+        self._active_category = "all"
+        self._cards: list[HelpCommandCard] = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        self.backdrop = QFrame(self)
+        self.backdrop.setObjectName("HelpBackdrop")
+        root.addWidget(self.backdrop)
+
+        backdrop_layout = QVBoxLayout(self.backdrop)
+        backdrop_layout.setContentsMargins(24, 24, 24, 24)
+        backdrop_layout.setAlignment(Qt.AlignCenter)
+
+        self.panel = QFrame(self.backdrop)
+        self.panel.setObjectName("HelpPanel")
+        shadow = QGraphicsDropShadowEffect(self.panel)
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        self.panel.setGraphicsEffect(shadow)
+        backdrop_layout.addWidget(self.panel, alignment=Qt.AlignCenter)
+
+        panel_layout = QVBoxLayout(self.panel)
+        panel_layout.setContentsMargins(20, 18, 20, 18)
+        panel_layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        self.title_lbl = QLabel(tr("help_title", lang))
+        self.title_lbl.setObjectName("HelpTitle")
+        header.addWidget(self.title_lbl)
+        header.addStretch(1)
+        self.close_btn = QPushButton("×")
+        self.close_btn.setObjectName("HelpClose")
+        self.close_btn.clicked.connect(self.close)
+        header.addWidget(self.close_btn)
+        panel_layout.addLayout(header)
+
+        self.search = QLineEdit()
+        self.search.setObjectName("HelpSearch")
+        self.search.setPlaceholderText(tr("help_search", lang))
+        self.search.textChanged.connect(self._apply_filters)
+        panel_layout.addWidget(self.search)
+
+        self.category_row = QHBoxLayout()
+        self.category_row.setSpacing(8)
+        panel_layout.addLayout(self.category_row)
+        self._category_buttons: dict[str, QPushButton] = {}
+        self._build_categories()
+
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName("HelpScroll")
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        panel_layout.addWidget(self.scroll, stretch=1)
+
+        self.grid_host = QWidget()
+        self.grid = QGridLayout(self.grid_host)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(12)
+        self.scroll.setWidget(self.grid_host)
+
+        self._apply_filters()
+
+    def set_language(self, lang: str, items: list[dict]) -> None:
+        self._lang = lang
+        self._items = list(items)
+        self.title_lbl.setText(tr("help_title", lang))
+        self.search.setPlaceholderText(tr("help_search", lang))
+        for cid, btn in self._category_buttons.items():
+            btn.setText(self._category_label(cid, lang))
+        self._apply_filters()
+
+    def _category_label(self, cid: str, lang: str) -> str:
+        key = {
+            "all": "help_category_all",
+            "time": "help_category_time",
+            "timer": "help_category_timer",
+            "alarm": "help_category_alarm",
+            "reminder": "help_category_reminder",
+            "notes": "help_category_notes",
+            "sites": "help_category_sites",
+            "system": "help_category_system",
+            "ai": "help_category_ai",
+        }.get(cid, "help_category_all")
+        return tr(key, lang)
+
+    def _build_categories(self) -> None:
+        for cid in ("all", "time", "timer", "alarm", "reminder", "notes", "sites", "system", "ai"):
+            btn = QPushButton(self._category_label(cid, self._lang))
+            btn.setObjectName("HelpCategoryChip")
+            btn.setCheckable(True)
+            btn.setChecked(cid == "all")
+            btn.clicked.connect(lambda _, c=cid: self._select_category(c))
+            self._category_buttons[cid] = btn
+            self.category_row.addWidget(btn)
+        self.category_row.addStretch(1)
+
+    def _select_category(self, cid: str) -> None:
+        self._active_category = cid
+        for key, btn in self._category_buttons.items():
+            btn.setChecked(key == cid)
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        query = (self.search.text() or "").strip().lower()
+        filtered = []
+        for item in self._items:
+            if self._active_category != "all" and item.get("category") != self._active_category:
+                continue
+            if query:
+                hay = " ".join(
+                    [
+                        str(item.get("title", "")),
+                        str(item.get("desc", "")),
+                        " ".join(item.get("examples", [])),
+                    ]
+                ).lower()
+                if query not in hay:
+                    continue
+            filtered.append(item)
+        self._rebuild_cards(filtered)
+
+    def _rebuild_cards(self, items: list[dict]) -> None:
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+        self._cards = [HelpCommandCard(item, self._lang, self._on_insert, self._on_send) for item in items]
+        self._layout_cards()
+
+    def _layout_cards(self) -> None:
+        width = self.scroll.viewport().width() or self.panel.width()
+        columns = 2 if width < 900 else 3
+        for idx, card in enumerate(self._cards):
+            row = idx // columns
+            col = idx % columns
+            self.grid.addWidget(card, row, col)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._layout_cards()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        parent = self.parentWidget()
+        if parent is not None:
+            self.resize(parent.size())
+            self.move(parent.mapToGlobal(QPoint(0, 0)))
+        super().showEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if not self.panel.geometry().contains(event.pos()):
+            self.close()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+class InAppToast(QFrame):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("InAppToast")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
+        self._fade_anim: QPropertyAnimation | None = None
+
+        layout = QVBoxLayout(self)
+        margin = max(8, int(self.fontMetrics().height() * 0.6))
+        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setSpacing(max(4, int(self.fontMetrics().height() * 0.25)))
+
+        self.title = QLabel("")
+        self.title.setObjectName("InAppToastTitle")
+        self.body = QLabel("")
+        self.body.setObjectName("InAppToastBody")
+        self.body.setWordWrap(True)
+        layout.addWidget(self.title)
+        layout.addWidget(self.body)
+        self.hide()
+
+    def show_message(self, title: str, body: str, duration_ms: int = 4200) -> None:
+        self.title.setText(title)
+        self.body.setText(body)
+        self.adjustSize()
+        self.show()
+        self.raise_()
+        effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+        anim = QPropertyAnimation(effect, b"opacity")
+        anim.setDuration(220)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.start()
+        self._fade_anim = anim
+        self._hide_timer.start(max(1200, int(duration_ms)))
+
+
+class AlertPopup(QDialog):
+    def __init__(self, parent: QWidget | None, title: str, body: str, actions: list[QPushButton]) -> None:
+        super().__init__(parent)
+        self.setObjectName("AlertPopup")
+        self.setWindowTitle(title)
+        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.Dialog)
+        self.setModal(False)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._drag_pos: QPoint | None = None
+        self._auto_close_timer = QTimer(self)
+        self._auto_close_timer.setSingleShot(True)
+        self._auto_close_timer.timeout.connect(self.close)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("AlertPopupTitle")
+        body_lbl = QLabel(body)
+        body_lbl.setObjectName("AlertPopupBody")
+        body_lbl.setWordWrap(True)
+        layout.addWidget(title_lbl)
+        layout.addWidget(body_lbl)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        for btn in actions:
+            btn_row.addWidget(btn)
+        layout.addLayout(btn_row)
+        self.setStyleSheet(
+            """
+            #AlertPopup { background: #0B1220; border: 2px solid #4CC9FF; border-radius: 12px; }
+            #AlertPopupTitle { color: #EAF1FF; font-weight: 800; font-size: 13px; }
+            #AlertPopupBody { color: #BBD0F5; font-size: 12px; }
+            """
+        )
+
+
+class AboutDialog(QDialog):
+    def __init__(self, parent: QWidget, lang: str, tech_info: dict[str, str]) -> None:
+        super().__init__(parent)
+        self.setObjectName("AboutDialog")
+        self.setWindowTitle(tr("btn_about", lang))
+        self.setMinimumSize(640, 520)
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel(tr("about_title", lang))
+        title.setObjectName("AboutTitle")
+        subtitle = QLabel(tr("about_subtitle", lang))
+        subtitle.setObjectName("AboutSubtitle")
+        subtitle.setWordWrap(True)
+        version = QLabel(f"v{__version__}")
+        version.setObjectName("AboutVersion")
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addWidget(version)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        layout.addWidget(scroll, stretch=1)
+
+        container = QWidget()
+        scroll.setWidget(container)
+        body = QVBoxLayout(container)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(12)
+
+        idea_card = self._card(tr("about_section_idea", lang))
+        idea_text = QLabel(self._idea_text(lang))
+        idea_text.setWordWrap(True)
+        idea_text.setObjectName("AboutText")
+        idea_card.layout().addWidget(idea_text)
+        body.addWidget(idea_card)
+
+        caps_card = self._card(tr("about_section_features", lang))
+        for sec in about_capabilities(lang):
+            block = QFrame()
+            block.setObjectName("AboutBlock")
+            block_layout = QVBoxLayout(block)
+            block_layout.setContentsMargins(8, 6, 8, 6)
+            block_layout.setSpacing(4)
+            title_row = QHBoxLayout()
+            title_row.setSpacing(6)
+            icon_lbl = QLabel(str(sec.get("icon", "")))
+            icon_lbl.setObjectName("AboutIcon")
+            ttl = QLabel(str(sec.get("title", "")))
+            ttl.setObjectName("AboutBlockTitle")
+            title_row.addWidget(icon_lbl)
+            title_row.addWidget(ttl)
+            title_row.addStretch(1)
+            block_layout.addLayout(title_row)
+            for feat in sec.get("features", []):
+                line = QLabel(f"• {feat}")
+                line.setObjectName("AboutBullet")
+                block_layout.addWidget(line)
+            caps_card.layout().addWidget(block)
+        body.addWidget(caps_card)
+
+        ex_card = self._card(tr("about_section_examples", lang))
+        chips = WrapGridWidget()
+        chips.setObjectName("AboutChips")
+        chips.set_spacing(6)
+        for ex in about_examples(lang):
+            chip = QLabel(ex)
+            chip.setObjectName("AboutChip")
+            chips.add_widget(chip)
+        ex_card.layout().addWidget(chips)
+        body.addWidget(ex_card)
+
+        tech_card = self._card(tr("about_section_tech", lang))
+        for key, value in tech_info.items():
+            row = QLabel(f"{key}: {value}")
+            row.setObjectName("AboutTechRow")
+            tech_card.layout().addWidget(row)
+        body.addWidget(tech_card)
+        body.addStretch(1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.copy_btn = QPushButton(tr("about_copy", lang))
+        self.copy_btn.setObjectName("AboutCopy")
+        self.close_btn = QPushButton(tr("about_close", lang))
+        self.close_btn.setObjectName("AboutClose")
+        self._copy_reset = QTimer(self)
+        self._copy_reset.setSingleShot(True)
+        self._copy_reset.timeout.connect(lambda: self.copy_btn.setText(tr("about_copy", lang)))
+        btn_row.addWidget(self.copy_btn)
+        btn_row.addWidget(self.close_btn)
+        layout.addLayout(btn_row)
+
+        self.copy_btn.clicked.connect(lambda: self._copy_to_clipboard(lang, tech_info))
+        self.close_btn.clicked.connect(self.accept)
+
+    def _card(self, title: str) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("AboutCard")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+        ttl = QLabel(title)
+        ttl.setObjectName("AboutCardTitle")
+        layout.addWidget(ttl)
+        return frame
+
+    def _idea_text(self, lang: str) -> str:
+        if (lang or "ru").lower() == "en":
+            return (
+                "Antoshka is a focused assistant for everyday commands and short dialogue. "
+                "It combines voice control with a clear desktop UI, keeping actions fast and explicit."
+            )
+        return (
+            "Антошка — практичный помощник для ежедневных команд и короткого диалога. "
+            "Он сочетает голосовое управление и понятный интерфейс, чтобы действия были быстрыми и ясными."
+        )
+
+    def _copy_to_clipboard(self, lang: str, tech_info: dict[str, str]) -> None:
+        parts = [
+            tr("about_title", lang),
+            tr("about_subtitle", lang),
+            f"v{__version__}",
+            "",
+            tr("about_section_idea", lang),
+            self._idea_text(lang),
+            "",
+            tr("about_section_features", lang),
+        ]
+        for sec in about_capabilities(lang):
+            parts.append(f"- {sec.get('title', '')}: {', '.join(sec.get('features', []))}")
+        parts.append("")
+        parts.append(tr("about_section_examples", lang))
+        parts.extend([f"- {ex}" for ex in about_examples(lang)])
+        parts.append("")
+        parts.append(tr("about_section_tech", lang))
+        parts.extend([f"- {k}: {v}" for k, v in tech_info.items()])
+        QApplication.clipboard().setText("\n".join(parts))
+        self.copy_btn.setText(tr("about_copied", lang))
+        self._copy_reset.start(1500)
+
+
+class AlertInlineWidget(QFrame):
+    def __init__(self, title: str, body: str, actions: list[QPushButton]) -> None:
+        super().__init__()
+        self.setObjectName("AlertInline")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(10, 8, 10, 8)
+        self._layout.setSpacing(0)
+        self._layout.setSizeConstraint(QVBoxLayout.SetMinimumSize)
+        self._title_lbl = QLabel(title)
+        self._title_lbl.setObjectName("AlertInlineTitle")
+        self._title_lbl.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._title_lbl.setMinimumHeight(0)
+        self._body_lbl = QLabel(body)
+        self._body_lbl.setObjectName("AlertInlineBody")
+        self._body_lbl.setWordWrap(True)
+        self._body_lbl.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._body_lbl.setMinimumHeight(0)
+        self._layout.addWidget(self._title_lbl)
+        self._layout.addWidget(self._body_lbl)
+        self._btn_row = WrapGridWidget()
+        self._btn_row.setObjectName("AlertInlineButtons")
+        self._btn_row.set_spacing(8)
+        self._btn_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        for btn in actions:
+            self._btn_row.add_widget(btn)
+        self._layout.addWidget(self._btn_row)
+        self._status = AlertStatusBanner("")
+        self._status.hide()
+        self._layout.addWidget(self._status)
+        self._layout.setSpacing(0)
+        self._layout.setStretchFactor(self._btn_row, 0)
+        self._layout.setStretchFactor(self._status, 0)
+
+    def set_status(self, text: str) -> None:
+        if self._btn_row is not None:
+            self._layout.removeWidget(self._btn_row)
+            self._btn_row.setParent(None)
+            self._btn_row = None
+        self._status.set_text(text)
+        self._status.show()
+        self._layout.setSpacing(0)
+        self._layout.invalidate()
+        self._layout.activate()
+        self.adjustSize()
+
+
+class AlertStatusBanner(QFrame):
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.setObjectName("AlertStatusBanner")
+        self._text = text
+        self._wave_phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(44)
+        self.setMaximumHeight(44)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(8)
+        self.icon = QLabel("✓")
+        self.icon.setObjectName("AlertStatusIcon")
+        self.label = QLabel(text)
+        self.label.setObjectName("AlertStatusText")
+        self.label.setWordWrap(True)
+        layout.addWidget(self.icon)
+        layout.addWidget(self.label, stretch=1)
+
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self.label.setText(text)
+        self.update()
+
+    def _tick(self) -> None:
+        self._wave_phase += 0.08
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 8, 8)
+        painter.setClipPath(path)
+        base_y = rect.center().y()
+        wave_amp = 3.0
+        spacing = 5.0
+        for idx in range(3):
+            points = []
+            for x in range(int(rect.left()) + 4, int(rect.right()) - 4, 6):
+                phase = self._wave_phase + idx * 1.1
+                y = base_y + (idx - 1) * spacing + wave_amp * math.sin((x - rect.left()) * 0.04 + phase)
+                points.append(QPoint(x, int(y)))
+            color = QColor(76, 201, 255, max(40, 80 - idx * 10))
+            painter.setPen(QPen(color, 1.0))
+            for i in range(1, len(points)):
+                painter.drawLine(points[i - 1], points[i])
+
+    def show_centered(self) -> None:
+        self.adjustSize()
+        parent = self.parentWidget()
+        if parent is not None:
+            center = parent.frameGeometry().center()
+            rect = self.frameGeometry()
+            rect.moveCenter(center)
+            self.move(rect.topLeft())
+        else:
+            screen = QGuiApplication.primaryScreen()
+            if screen is not None:
+                rect = self.frameGeometry()
+                rect.moveCenter(screen.availableGeometry().center())
+                self.move(rect.topLeft())
+        self.show()
+
+    def set_auto_close(self, seconds: int) -> None:
+        seconds = max(0, int(seconds))
+        if seconds <= 0:
+            self._auto_close_timer.stop()
+            return
+        self._auto_close_timer.start(seconds * 1000)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
 
 class StartScreen(QWidget):
     def __init__(self, theme, on_start):
@@ -410,12 +1379,15 @@ class AntoshkaWindow(QMainWindow):
         self.settings = load_settings()
         log_level = (self.settings.get("app", {}) or {}).get("log_level", "INFO")
         self.log = setup_logger(level=str(log_level))
+        check_i18n_integrity()
         self.debug_mode = bool((self.settings.get("app", {}) or {}).get("debug", False))
         self.icons = IconSet()
         self._first_message = True
         self._tts_warned = False
         self.listening = False
         self.ai_mode = bool(self.settings.get("ui", {}).get("ai_mode", False))
+        self._ai_inflight = False
+        self._llm_queue: list[tuple[str, str]] = []
         self._last_status = ""
         self.wake_listener = None
         self.language_mode = normalize_language_mode(
@@ -429,9 +1401,16 @@ class AntoshkaWindow(QMainWindow):
         self._init_stt()
         self._init_context()
         self._init_ui()
+        self._maybe_enable_ai_mode()
         self.alert_player = AudioAlerts(self)
         self._active_alert_meta: dict | None = None
         self._event_cards: dict[str, tuple[EventCardWidget, ChatBubble]] = {}
+        self._alert_popups: dict[str, AlertPopup] = {}
+        self._alert_inlines: dict[str, AlertInlineWidget] = {}
+        self._event_anchors: dict[str, QWidget] = {}
+        self._help_overlay: HelpOverlay | None = None
+        self._last_user_container: QWidget | None = None
+        self._suggestion_context = "start"
         self._init_tray_and_notifications()
         self._voice_timeout_timer = QTimer(self)
         self._voice_timeout_timer.setSingleShot(True)
@@ -452,6 +1431,10 @@ class AntoshkaWindow(QMainWindow):
         self._flush_notices()
         self._say_startup()
 
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._position_toast()
+
     def _init_tts(self) -> None:
         self.tts_worker = TTSWorker(self.settings)
 
@@ -470,6 +1453,61 @@ class AntoshkaWindow(QMainWindow):
             self.log.warning("LLM disabled: %s", e)
             self.llm_client = None
             self.llm_error = str(e)
+            if "OPENAI_API_KEY is missing" in self.llm_error:
+                self.log.warning("OpenAI disabled: missing OPENAI_API_KEY")
+                self._enqueue_notice(tr("msg_ai_missing_key", self.language))
+
+    def _maybe_enable_ai_mode(self) -> None:
+        if self.llm_client is None:
+            return
+        ui = self.settings.get("ui", {}) or {}
+        if not ui.get("ai_mode_autostart", True):
+            return
+        if ui.get("ai_mode", False):
+            return
+        ui["ai_mode"] = True
+        self.settings["ui"] = ui
+        save_settings(self.settings)
+        self.ai_mode = True
+        self._sync_ai_button()
+        self._enqueue_notice(tr("msg_ai_enabled", self.language))
+
+    def _ai_check_message(self, ok: bool, reason: str) -> str:
+        if ok:
+            return tr("msg_ai_check_ok", self.language)
+        if reason == "missing_api_key":
+            return tr("msg_ai_missing_key", self.language)
+        if reason == "http_401":
+            return tr("msg_ai_check_401", self.language)
+        if reason == "http_403":
+            return tr("msg_ai_check_403", self.language)
+        if reason == "http_402":
+            return tr("msg_ai_check_no_credits", self.language)
+        if reason == "quota":
+            return tr("msg_ai_check_no_credits", self.language)
+        if reason.startswith("rate_limit:"):
+            try:
+                seconds = int(float(reason.split(":", 1)[1]))
+            except Exception:
+                seconds = 0
+            if seconds > 0:
+                return tr("msg_ai_rate_limit_wait", self.language).format(seconds=seconds)
+            return tr("msg_ai_rate_limit", self.language)
+        if reason == "rate_limit":
+            return tr("msg_ai_rate_limit", self.language)
+        if reason == "http_429":
+            return tr("msg_ai_check_429", self.language)
+        if reason == "network":
+            return tr("msg_ai_check_network", self.language)
+        return tr("msg_ai_check_error", self.language)
+
+    def _set_ai_busy(self, active: bool) -> None:
+        self._ai_inflight = bool(active)
+        if active:
+            self.ai_busy.setText(tr("msg_ai_inflight", self.language))
+            self.ai_busy.show()
+        else:
+            self.ai_busy.hide()
 
     def _init_stt(self) -> None:
         self.stt = create_stt(self.settings)
@@ -526,7 +1564,7 @@ class AntoshkaWindow(QMainWindow):
             )
         self.app_context = AppContext(
             notify=self._notify,
-            data_dir=Path("data"),
+            data_dir=data_dir(),
             scheduler=self.scheduler,
             volume=volume,
             llm_client=self.llm_client,
@@ -593,6 +1631,7 @@ class AntoshkaWindow(QMainWindow):
         root = GradientBackground(self.theme)
         self.root = root
         self.setCentralWidget(root)
+        self.toast = InAppToast(self.root)
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(20, 20, 20, 20)
         root_layout.setSpacing(12)
@@ -617,6 +1656,17 @@ class AntoshkaWindow(QMainWindow):
         self.stack.setCurrentWidget(self.start_screen if show_start else self.chat_page)
         self.start_screen.set_language(self.language)
         self._apply_styles()
+        self._position_toast()
+
+    def _position_toast(self) -> None:
+        toast = getattr(self, "toast", None)
+        if toast is None or self.root is None:
+            return
+        toast.adjustSize()
+        margin = max(12, int(self.fontMetrics().height() * 0.9))
+        x = max(margin, self.root.width() - toast.width() - margin)
+        y = margin
+        toast.move(x, y)
 
     def _build_topbar(self, root_layout: QVBoxLayout) -> None:
         top = QHBoxLayout()
@@ -640,6 +1690,10 @@ class AntoshkaWindow(QMainWindow):
         self.ai_badge.setObjectName("AIBadge")
         self.ai_badge.hide()
         top.addWidget(self.ai_badge)
+        self.ai_busy = QLabel("")
+        self.ai_busy.setObjectName("AIBusy")
+        self.ai_busy.hide()
+        top.addWidget(self.ai_busy)
         settings_btn = IconButton(self._icon(self.icons.settings), self._icon(self.icons.settings_active))
         settings_btn.clicked.connect(self._open_settings)
         top.addWidget(settings_btn)
@@ -652,11 +1706,25 @@ class AntoshkaWindow(QMainWindow):
         self.chat_container = QWidget()
         self.chat_container_layout = QVBoxLayout(self.chat_container)
         self.chat_container_layout.setAlignment(Qt.AlignTop)
-        self.chat_container_layout.setSpacing(8)
+        self.chat_container_layout.setSpacing(6)
         self.chat_scroll.setWidget(self.chat_container)
         root_layout.addWidget(self.chat_scroll, stretch=1)
 
     def _build_input(self, root_layout: QVBoxLayout) -> None:
+        suggest_row = QHBoxLayout()
+        self.suggestions_bar = SuggestionChipsWidget(
+            on_insert=self._insert_command,
+            on_send=self._send_command,
+            on_log=self._log_suggestion_click,
+        )
+        suggest_row.addWidget(self.suggestions_bar, stretch=1)
+        self.suggestions_refresh = QPushButton("↻")
+        self.suggestions_refresh.setObjectName("SuggestionsRefresh")
+        self.suggestions_refresh.setCursor(Qt.PointingHandCursor)
+        self.suggestions_refresh.clicked.connect(lambda: self._update_suggestions(force_reload=True))
+        self.suggestions_refresh.setFixedSize(18, 18)
+        suggest_row.addWidget(self.suggestions_refresh)
+        root_layout.addLayout(suggest_row)
         input_row = QHBoxLayout()
         self.input = QLineEdit()
         self.input.setPlaceholderText(tr("placeholder", self.language))
@@ -762,6 +1830,11 @@ class AntoshkaWindow(QMainWindow):
                     background: transparent;
                     border: none;
                 }}
+                QFrame#ChatBubble[highlight="true"] {{
+                    background: rgba(76, 201, 255, 0.12);
+                    border: 1px solid {theme.accent.name()};
+                    border-radius: 14px;
+                }}
                 #BubbleText {{ font-size: 13px; color: {theme.text_primary.name()}; }}
                 #ActionCard {{
                     background: {theme.card_bg.name()};
@@ -772,6 +1845,214 @@ class AntoshkaWindow(QMainWindow):
                 #ActionDetails {{ font-size: 12px; color: {theme.text_muted.name()}; }}
                 #ActionLink {{ font-size: 11px; color: {theme.accent.name()}; }}
                 #ActionStatus {{ font-size: 10px; color: {theme.accent.name()}; }}
+                #HelpCard {{
+                    background: {theme.card_bg.name()};
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 12px;
+                }}
+                #HelpSearch {{
+                    background: {theme.input_bg.name()};
+                    border: 1px solid {theme.input_border.name()};
+                    border-radius: 10px;
+                    padding: 8px 10px;
+                }}
+                #HelpSection {{
+                    background: rgba(255, 255, 255, 0.02);
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 10px;
+                }}
+                #HelpSectionTitle {{ font-size: 13px; font-weight: 700; color: {theme.text_primary.name()}; }}
+                #HelpSectionIcon {{ font-size: 14px; }}
+                #HelpSectionDesc {{ font-size: 11px; color: {theme.text_muted.name()}; }}
+                #HelpChip {{
+                    background: {theme.button_bg.name()};
+                    border: 1px solid {theme.button_border.name()};
+                    border-radius: 10px;
+                    padding: 6px 10px;
+                    font-family: Consolas, "Courier New", monospace;
+                }}
+                #HelpChip:hover {{
+                    border-color: {theme.accent.name()};
+                    background: rgba(255, 255, 255, 0.06);
+                }}
+                #HelpOverlay {{
+                    background: transparent;
+                }}
+                #HelpBackdrop {{
+                    background: rgba(10, 12, 18, 0.55);
+                }}
+                #HelpPanel {{
+                    background: #0F1626;
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 20px;
+                }}
+                #HelpTitle {{
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: #F1F5FF;
+                }}
+                #HelpClose {{
+                    background: transparent;
+                    border: none;
+                    color: #B9C6E3;
+                    font-size: 18px;
+                    padding: 4px 6px;
+                }}
+                #HelpClose:hover {{
+                    color: #FFFFFF;
+                }}
+                #HelpSearch {{
+                    background: {theme.input_bg.name()};
+                    border: 1px solid {theme.input_border.name()};
+                    border-radius: 12px;
+                    padding: 10px 12px;
+                    font-size: 12px;
+                    color: {theme.text_primary.name()};
+                }}
+                #HelpCategoryChip {{
+                    background: rgba(255, 255, 255, 0.04);
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 14px;
+                    padding: 6px 10px;
+                    font-size: 11px;
+                    color: #C9D6EE;
+                }}
+                #HelpCategoryChip:checked {{
+                    background: rgba(76, 201, 255, 0.18);
+                    border-color: #4CC9FF;
+                    color: #EAF6FF;
+                }}
+                #HelpCommandCard {{
+                    background: #111B30;
+                    border: 1px solid #233457;
+                    border-radius: 16px;
+                }}
+                #HelpCommandTitle {{
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #F0F5FF;
+                }}
+                #HelpCommandDesc {{
+                    font-size: 11px;
+                    color: #9FB2D6;
+                }}
+                #HelpExampleText {{
+                    font-size: 11px;
+                    color: #D6E2F8;
+                }}
+                #HelpExampleInsert {{
+                    background: rgba(255, 255, 255, 0.06);
+                    border: 1px solid #2B3A5E;
+                    border-radius: 8px;
+                    padding: 4px 8px;
+                    font-size: 10px;
+                    color: #DCE7FF;
+                }}
+                #HelpExampleRun {{
+                    background: {theme.accent.name()};
+                    border: none;
+                    border-radius: 8px;
+                    padding: 4px 8px;
+                    font-size: 10px;
+                    color: #0B1020;
+                    font-weight: 700;
+                }}
+                #SuggestionsBar {{
+                    background: transparent;
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 12px;
+                    padding: 8px 10px;
+                    min-height: 36px;
+                }}
+                #SuggestionsBar QPushButton {{
+                    color: #EAF1FF;
+                }}
+                #SuggestionChip {{
+                    background: #0F1A2E;
+                    border: 1px solid #4CC9FF;
+                    border-radius: 7px;
+                    padding: 2px 6px;
+                    font-family: "Segoe UI", "Arial", sans-serif;
+                    color: #EAF1FF;
+                    min-height: 16px;
+                    font-size: 10px;
+                    font-weight: 700;
+                    letter-spacing: 0.2px;
+                }}
+                #SuggestionChip:hover {{
+                    border-color: #7CD7FF;
+                    background: #13233A;
+                }}
+                #SuggestionChip:pressed {{
+                    background: #0B1220;
+                }}
+                #SuggestionChip:disabled {{
+                    color: #8AA0C8;
+                    border-color: #2A3A5A;
+                }}
+                #SuggestionsRefresh {{
+                    background: {theme.button_bg.name()};
+                    border: 1px solid {theme.button_border.name()};
+                    border-radius: 7px;
+                    color: {theme.text_primary.name()};
+                    font-size: 11px;
+                }}
+                #SuggestionsRefresh:hover {{
+                    border-color: {theme.accent.name()};
+                    background: rgba(255, 255, 255, 0.06);
+                }}
+                #HelpExecute {{
+                    background: {theme.accent.name()};
+                    color: #0b1020;
+                    border: none;
+                    border-radius: 10px;
+                    padding: 8px 12px;
+                    font-weight: 700;
+                }}
+                #AboutDialog {{
+                    background: {theme.card_bg.name()};
+                }}
+                #AboutTitle {{ font-size: 18px; font-weight: 800; color: {theme.text_primary.name()}; }}
+                #AboutSubtitle {{ font-size: 12px; color: {theme.text_muted.name()}; }}
+                #AboutVersion {{ font-size: 11px; color: {theme.text_muted.name()}; }}
+                #AboutCard {{
+                    background: {theme.card_bg.name()};
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 12px;
+                }}
+                #AboutCardTitle {{ font-size: 13px; font-weight: 700; color: {theme.text_primary.name()}; }}
+                #AboutText {{ font-size: 12px; color: {theme.text_primary.name()}; }}
+                #AboutBlock {{
+                    background: rgba(255, 255, 255, 0.03);
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 10px;
+                }}
+                #AboutBlockTitle {{ font-size: 12px; font-weight: 700; color: {theme.text_primary.name()}; }}
+                #AboutBullet {{ font-size: 11px; color: {theme.text_muted.name()}; }}
+                #AboutIcon {{ font-size: 14px; }}
+                #AboutChip {{
+                    background: {theme.button_bg.name()};
+                    border: 1px solid {theme.button_border.name()};
+                    border-radius: 10px;
+                    padding: 6px 10px;
+                    font-family: Consolas, "Courier New", monospace;
+                }}
+                #AboutTechRow {{ font-size: 11px; color: {theme.text_muted.name()}; }}
+                #AlertInline {{
+                    background: #0B1220;
+                    border: 2px solid #4CC9FF;
+                    border-radius: 12px;
+                }}
+                #AlertInlineTitle {{ font-size: 13px; font-weight: 800; color: #EAF1FF; margin: 0px; padding: 0px; }}
+                #AlertInlineBody {{ font-size: 11px; color: #BBD0F5; margin: 0px; padding: 0px; }}
+                #AlertStatusBanner {{
+                    background: rgba(15, 26, 46, 0.9);
+                    border: 1px solid #4CC9FF;
+                    border-radius: 8px;
+                    min-height: 44px;
+                }}
+                #AlertStatusIcon {{ font-size: 12px; color: #7CD7FF; }}
+                #AlertStatusText {{ font-size: 11px; color: #EAF1FF; }}
                 #EventCard {{
                     background: {theme.card_bg.name()};
                     border: 1px solid {theme.card_border.name()};
@@ -781,21 +2062,22 @@ class AntoshkaWindow(QMainWindow):
                 #EventSubtitle {{ font-size: 12px; color: {theme.text_primary.name()}; }}
                 #EventWhen {{ font-size: 11px; color: {theme.text_muted.name()}; }}
                 #EventStatus {{ font-size: 11px; color: {theme.accent.name()}; }}
-                #EventCard QPushButton {{
-                    background: {theme.button_bg.name()};
-                    border: 1px solid {theme.button_border.name()};
-                    border-radius: 8px;
-                    padding: 4px 8px;
+                #InAppToast {{
+                    background: {theme.card_bg.name()};
+                    border: 1px solid {theme.card_border.name()};
+                    border-radius: 12px;
                 }}
-                #EventCard QPushButton:hover {{
-                    border-color: {theme.accent.name()};
-                    background: rgba(255, 255, 255, 0.06);
-                }}
-                #EventCard QPushButton:pressed {{
-                    background: rgba(255, 255, 255, 0.10);
-                }}
+                #InAppToastTitle {{ font-size: 12px; font-weight: 700; color: {theme.text_primary.name()}; }}
+                #InAppToastBody {{ font-size: 11px; color: {theme.text_muted.name()}; }}
                 #AIBadge {{
                     background: {theme.accent.name()};
+                    color: #0b1020;
+                    padding: 4px 10px;
+                    border-radius: 10px;
+                    font-weight: 700;
+                }}
+                #AIBusy {{
+                    background: {theme.accent_2.name()};
                     color: #0b1020;
                     padding: 4px 10px;
                     border-radius: 10px;
@@ -858,6 +2140,11 @@ class AntoshkaWindow(QMainWindow):
         self.ai_btn.setText(tr("btn_ai", self.language))
         self.clear_btn.setText(tr("btn_clear_chat", self.language))
         self.ai_badge.setText(tr("btn_ai", self.language))
+        if self._ai_inflight:
+            self.ai_busy.setText(tr("msg_ai_inflight", self.language))
+        self._update_suggestions(force_reload=True)
+        if self._help_overlay is not None:
+            self._help_overlay.set_language(self.language, self._build_help_items(self.language))
 
     def _start_chat(self) -> None:
         if self.stack.currentWidget() == self.chat_page:
@@ -936,6 +2223,7 @@ class AntoshkaWindow(QMainWindow):
             w = QWidget()
             w.setLayout(wrap)
             container = w
+            self._last_user_container = container
         else:
             container = bubble
             self._last_bot_bubble = bubble
@@ -943,13 +2231,80 @@ class AntoshkaWindow(QMainWindow):
         QTimer.singleShot(0, self, lambda: self._scroll_to_bottom())
         return bubble
 
+    def _help_category_for(self, cmd_name: str) -> str:
+        if cmd_name in {"time", "date", "event_add", "event_list"}:
+            return "time"
+        if cmd_name == "timer_set":
+            return "timer"
+        if cmd_name == "alarm_set":
+            return "alarm"
+        if cmd_name == "reminder_set":
+            return "reminder"
+        if cmd_name.startswith("note_"):
+            return "notes"
+        if cmd_name in {"open_url", "search_web", "open_mail", "open_calendar", "open_map", "weather"}:
+            return "sites"
+        if cmd_name == "chat":
+            return "ai"
+        return "system"
+
+    def _build_help_items(self, lang: str) -> list[dict]:
+        registry = self.dialogue.router.registry
+        items: list[dict] = []
+        for cmd in registry.all():
+            title = command_name(cmd.name, lang)
+            desc = command_desc(cmd.name, lang)
+            if (lang or "ru").lower() == "ru":
+                examples = list(cmd.examples_ru or [])
+            else:
+                examples = list(cmd.examples_en or [])
+            examples = [ex for ex in examples if isinstance(ex, str) and ex.strip()]
+            items.append(
+                {
+                    "id": cmd.name,
+                    "title": title,
+                    "desc": desc,
+                    "examples": examples,
+                    "category": self._help_category_for(cmd.name),
+                }
+            )
+        items.sort(key=lambda item: (item.get("category", ""), item.get("title", "")))
+        return items
+
+    def _open_help_overlay(self) -> None:
+        items = self._build_help_items(self.language)
+        if not hasattr(self, "_help_overlay") or self._help_overlay is None:
+            self._help_overlay = HelpOverlay(
+                parent=self,
+                items=items,
+                lang=self.language,
+                on_insert=self._insert_command,
+                on_send=self._send_command,
+            )
+        else:
+            self._help_overlay.set_language(self.language, items)
+        self._help_overlay.show()
+        self._help_overlay.raise_()
+
     def _append_action(self, result: ActionResult) -> None:
+        if result.action == "help":
+            self._open_help_overlay()
+            msg = result.text or tr("msg_help_opened", self.language)
+            self._append_message(msg, is_user=False)
+            self._set_suggestion_context("default")
+            return
+
         status_key = "status_ok" if (result.status or "").lower() == "ok" else "status_error"
         status_text = tr(status_key, self.language)
         card = ActionCard(result.title, result.details, status_text, result.url)
         bubble = ChatBubble(result.text, is_user=False, theme=self.theme, action_widget=card)
         self.chat_container_layout.addWidget(bubble)
         self._last_bot_bubble = bubble
+        if result.action in {"timer_set", "alarm_set", "reminder_set"}:
+            event_id = str(result.meta.get("event_id") or "")
+            if event_id:
+                self._event_anchors[event_id] = bubble
+        self._update_suggestion_context_from_action(result.action)
         QTimer.singleShot(0, self, lambda: self._scroll_to_bottom())
 
     def _scroll_to_bottom(self) -> None:
@@ -973,6 +2328,7 @@ class AntoshkaWindow(QMainWindow):
             if w is not None:
                 w.setParent(None)
         self._append_message(tr("msg_chat_cleared", self.language), is_user=False)
+        self._set_suggestion_context("start")
 
     def _confirm_clear_history(self) -> bool:
         dlg = QDialog(self)
@@ -1003,8 +2359,8 @@ class AntoshkaWindow(QMainWindow):
     def _clear_chat_flow(self) -> None:
         self._clear_chat_ui()
         if self._confirm_clear_history():
-            clear_history(Path("data"))
-            clear_chat_history(Path("data"))
+            clear_history(data_dir())
+            clear_chat_history(data_dir())
             self.log.info("Chat history cleared")
 
     def _clear_chat_clicked(self) -> None:
@@ -1013,6 +2369,7 @@ class AntoshkaWindow(QMainWindow):
     def _notify(self, message: str | Event) -> None:
         def _update() -> None:
             if isinstance(message, Event):
+                self.log.info("ALERT notify received type=%s id=%s", message.type, message.id)
                 self._handle_alert_notify(message)
                 return
             self._append_message(message, is_user=False)
@@ -1021,8 +2378,70 @@ class AntoshkaWindow(QMainWindow):
             self._set_status("ready")
         QTimer.singleShot(0, self, _update)
 
+    def _tune_alert_button(self, btn: QPushButton, role: str = "default") -> None:
+        fm = btn.fontMetrics()
+        margin = btn.style().pixelMetric(QStyle.PM_ButtonMargin, None, btn)
+        min_h = fm.height() + margin * 2 + max(6, int(fm.height() * 0.2))
+        btn.setMinimumHeight(max(40, int(min_h)))
+        btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        btn.setStyleSheet(
+            "QPushButton {"
+            "font-weight: 800; "
+            "background: #1B1F2B; border: 2px solid #EAF1FF; border-radius: 8px; "
+            "padding: 8px 12px; color: #EAF1FF; }"
+            "QPushButton:hover { background: #2A3347; border-color: #FFFFFF; }"
+            "QPushButton:pressed { background: #131924; }"
+            "QPushButton:disabled { background: #2A2A2A; border-color: #555555; color: #999999; }"
+        )
+        if role == "stop":
+            btn.setStyleSheet(
+                "QPushButton {"
+                "font-weight: 800; "
+                "background: #FF4D4D; border: 2px solid #FFFFFF; border-radius: 8px; "
+                "padding: 8px 12px; color: #1A0202; }"
+                "QPushButton:hover { background: #FF6B6B; border-color: #7A1E1E; }"
+                "QPushButton:pressed { background: #E63B3B; }"
+                "QPushButton:disabled { background: #2A2A2A; border-color: #555555; color: #999999; }"
+            )
+        elif role == "snooze":
+            btn.setStyleSheet(
+                "QPushButton {"
+                "font-weight: 800; "
+                "background: #FFD24D; border: 2px solid #FFFFFF; border-radius: 8px; "
+                "padding: 8px 12px; color: #1A1200; }"
+                "QPushButton:hover { background: #FFDB66; border-color: #8A6A00; }"
+                "QPushButton:pressed { background: #F0C23C; }"
+                "QPushButton:disabled { background: #2A2A2A; border-color: #555555; color: #999999; }"
+            )
+        elif role == "restart":
+            btn.setStyleSheet(
+                "QPushButton {"
+                "font-weight: 700; "
+                "background: #8B5CF6; border: 2px solid #FFFFFF; border-radius: 8px; "
+                "padding: 8px 12px; color: #0C0620; }"
+                "QPushButton:hover { background: #A37BFF; border-color: #4C2B8A; }"
+                "QPushButton:pressed { background: #7A49E6; }"
+                "QPushButton:disabled { background: #2A2A2A; border-color: #555555; color: #999999; }"
+            )
+
+    def _tune_alert_combo(self, combo: QComboBox) -> None:
+        fm = combo.fontMetrics()
+        margin = combo.style().pixelMetric(QStyle.PM_FocusFrameHMargin, None, combo)
+        min_h = fm.height() + margin * 2 + max(8, int(fm.height() * 0.3))
+        combo.setMinimumHeight(max(28, int(min_h)))
+        combo.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+
+    def _show_in_app_toast(self, title: str, body: str) -> None:
+        toast = getattr(self, "toast", None)
+        if toast is None:
+            return
+        toast.show_message(title, body)
+        self._position_toast()
+
     def _handle_alert_notify(self, event: Event) -> None:
-        kind = str(event.type)
+        kind = str(event.type or "").lower()
+        if kind not in {"timer", "alarm", "reminder"}:
+            kind = "reminder"
         if kind == "timer":
             duration = str(event.payload.get("duration_text") or event.duration_sec or "")
             msg = tr("msg_timer_done", self.language).format(duration=duration)
@@ -1032,7 +2451,8 @@ class AntoshkaWindow(QMainWindow):
             msg = tr("msg_alarm_fired", self.language)
         else:
             msg = str(event.payload.get("message", ""))
-        actions = self._build_alert_actions(event)
+        debug_overlay = bool(self.debug_mode or (self.settings.get("ui", {}) or {}).get("debug_ui", False))
+        actions = self._build_alert_actions(event, debug_ui=debug_overlay)
         subtitle = ""
         if kind == "timer":
             subtitle = f"{tr('label_duration', self.language)}: {duration}"
@@ -1040,94 +2460,395 @@ class AntoshkaWindow(QMainWindow):
             subtitle = str(event.payload.get("text", ""))
         when_text = event.due_time.strftime("%H:%M:%S")
         if kind == "timer":
-            title = tr("action_timer_title", self.language)
+            title = tr("label_fired_timer", self.language)
         elif kind == "reminder":
-            title = tr("action_reminder_title", self.language)
+            title = tr("label_fired_reminder", self.language)
         elif kind == "note":
-            title = tr("action_note_title", self.language)
+            title = tr("label_fired_reminder", self.language)
         else:
-            title = tr("action_alarm_title", self.language)
+            title = tr("label_fired_alarm", self.language)
 
         card = EventCardWidget(
             title=title,
             subtitle=subtitle,
             when_text=when_text,
             buttons_row=actions,
+            debug_overlay=debug_overlay,
         )
+        card.raise_()
         bubble = self._append_message(msg, is_user=False, action_widget=card)
         self._event_cards[event.id] = (card, bubble)
+        self.log.info("ALERT card added type=%s id=%s buttons=%s", kind, event.id, len(card.findChildren(QPushButton)))
+        QTimer.singleShot(0, self, lambda c=card: self._log_alert_card_layout(c))
         self._animate_widget_in(bubble)
         card.set_alerting(True)
         bubble.set_emphasis(1.0)
+        QTimer.singleShot(0, self, self._scroll_to_bottom)
+        QTimer.singleShot(0, self, lambda c=card: c.adjustSize())
+        QTimer.singleShot(0, self, lambda: self.chat_container.updateGeometry())
         self._play_alert_sound_from_settings()
         self._active_alert_meta = event.payload
         self.log.info("ALERT start type=%s id=%s sound=%s", kind, event.id, self.settings.get("ui", {}).get("alerts_sound"))
+        self._show_in_app_toast(title, msg)
         self._notify_system_event(event, msg)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self.stack.currentWidget() != self.chat_page:
+            self.stack.setCurrentWidget(self.chat_page)
+        try:
+            self.chat_scroll.ensureWidgetVisible(card)
+            self.chat_scroll.ensureWidgetVisible(bubble)
+        except Exception:  # noqa: BLE001
+            pass
+        self._show_alert_inline(event, title, msg)
+        self._show_alert_popup(event, title, msg)
+        self._restore_window()
+        try:
+            self.chat_scroll.ensureWidgetVisible(card)
+            self.chat_scroll.verticalScrollBar().setValue(self.chat_scroll.verticalScrollBar().maximum())
+        except Exception:  # noqa: BLE001
+            pass
 
-    def _build_alert_actions(self, event: Event) -> QWidget:
+    def _build_alert_actions(self, event: Event, debug_ui: bool = False) -> QWidget:
         settings = get_alert_settings(self.settings)
         box = QWidget()
-        layout = QHBoxLayout(box)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        box.setObjectName("EventButtons")
+        box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        if debug_ui:
+            box.setProperty("debug", True)
+        wrapper = QVBoxLayout(box)
+        wrapper.setContentsMargins(10, 8, 10, 8)
+        wrapper.setSpacing(8)
+
+        primary = WrapGridWidget()
+        primary.setObjectName("EventButtonsPrimary")
+        primary.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        primary.set_spacing(6)
+        wrapper.addWidget(primary)
+
+        default_minutes = int(settings.get("snooze_default_minutes", 5))
+        snooze_btn = QPushButton(tr("btn_alert_snooze", self.language))
+        snooze_btn.setObjectName("AlertBtnSnooze")
+        self._tune_alert_button(snooze_btn, role="snooze")
+        snooze_btn.clicked.connect(
+            lambda: self._alert_button_click(event_id=event.id, action="snooze", minutes=default_minutes)
+        )
+        primary.add_widget(snooze_btn)
+
+        stop_btn = QPushButton(tr("btn_alert_stop", self.language))
+        stop_btn.setObjectName("AlertBtnStop")
+        self._tune_alert_button(stop_btn, role="stop")
+        stop_btn.clicked.connect(lambda: self._alert_button_click(event_id=event.id, action="stop"))
+        primary.add_widget(stop_btn)
+
+        if settings.get("timer_restart_enabled", True):
+            restart_btn = QPushButton(tr("btn_alert_repeat", self.language))
+            restart_btn.setObjectName("AlertBtnRestart")
+            self._tune_alert_button(restart_btn, role="restart")
+            restart_btn.clicked.connect(lambda: self._alert_button_click(event_id=event.id, action="restart", event=event))
+            primary.add_widget(restart_btn)
+
+        secondary = WrapGridWidget()
+        secondary.setObjectName("EventButtonsSecondary")
+        secondary.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        secondary.set_spacing(6)
 
         if settings.get("snooze_quick_enabled", True):
             for minutes in settings.get("snooze_quick_buttons", []):
                 btn = QPushButton(f"+{int(minutes)}")
-                btn.clicked.connect(lambda _, m=int(minutes): self._alert_snooze(event.id, m))
-                layout.addWidget(btn)
+                btn.setObjectName("AlertBtnQuick")
+                self._tune_alert_button(btn, role="default")
+                btn.clicked.connect(
+                    lambda _, m=int(minutes): self._alert_button_click(event_id=event.id, action="snooze", minutes=m)
+                )
+                secondary.add_widget(btn)
 
         if settings.get("snooze_dropdown_enabled", True):
             dropdown = QComboBox()
+            self._tune_alert_combo(dropdown)
             for minutes in settings.get("snooze_dropdown_options", []):
                 dropdown.addItem(f"{int(minutes)}", int(minutes))
             dropdown.activated.connect(
-                lambda _, dd=dropdown: self._alert_snooze(event.id, int(dd.currentData() or settings.get("snooze_default_minutes", 5)))
+                lambda _, dd=dropdown: self._alert_button_click(
+                    event_id=event.id,
+                    action="snooze",
+                    minutes=int(dd.currentData() or settings.get("snooze_default_minutes", 5)),
+                )
             )
-            layout.addWidget(dropdown)
+            secondary.add_widget(dropdown)
 
-        stop_btn = QPushButton(tr("btn_alert_stop", self.language))
-        stop_btn.clicked.connect(lambda: self._alert_stop(event.id, "user"))
-        layout.addWidget(stop_btn)
+        if secondary.layout().count() > 0:
+            wrapper.addWidget(secondary)
 
-        if event.type == "timer" and settings.get("timer_restart_enabled", True):
-            restart_btn = QPushButton(tr("btn_alert_repeat", self.language))
-            restart_btn.clicked.connect(lambda: self._alert_restart(event))
-            layout.addWidget(restart_btn)
-
+        fm = box.fontMetrics()
+        row_height = max(56, int(fm.height() * 2.4))
+        min_rows = 1 + (1 if secondary.layout().count() > 0 else 0)
+        box.setMinimumHeight(row_height * min_rows + (wrapper.spacing() * max(0, min_rows - 1)) + 8)
         return box
+
+    def _log_alert_card_layout(self, card: EventCardWidget) -> None:
+        try:
+            size = card.size()
+            min_size = card.minimumSize()
+            layout = card.layout()
+            layout_type = type(layout).__name__ if layout is not None else "None"
+            layout_count = layout.count() if layout is not None else 0
+            parent = card.parentWidget()
+            parent_name = parent.objectName() if parent is not None else "None"
+            self.log.info(
+                "ALERT card layout class=%s name=%s parent=%s layout=%s count=%s size=%sx%s min=%sx%s hint=%s geom=%s",
+                type(card).__name__,
+                card.objectName(),
+                parent_name,
+                layout_type,
+                layout_count,
+                size.width(),
+                size.height(),
+                min_size.width(),
+                min_size.height(),
+                card.sizeHint(),
+                card.geometry(),
+            )
+            if layout_count > 0 and card.geometry().height() <= 0:
+                self.log.warning("ALERT card layout bug: layout has items but height=0")
+            for btn in card.findChildren(QPushButton):
+                top_left = btn.mapTo(card, QPoint(0, 0))
+                rect = QRect(top_left, btn.size())
+                visible = btn.isVisible()
+                style_len = len(btn.styleSheet() or "")
+                reasons = []
+                if not visible:
+                    reasons.append("isVisible=False")
+                if rect.width() <= 0:
+                    reasons.append("width<=0")
+                if rect.height() <= 0:
+                    reasons.append("height<=0")
+                if btn.minimumHeight() > btn.height():
+                    reasons.append("height too small")
+                self.log.info(
+                    "ALERT card btn text=%s visible=%s enabled=%s geom=%s size=%sx%s min=%sx%s style_len=%s",
+                    btn.text(),
+                    visible,
+                    btn.isEnabled(),
+                    rect,
+                    btn.width(),
+                    btn.height(),
+                    btn.minimumWidth(),
+                    btn.minimumHeight(),
+                    style_len,
+                )
+                if reasons:
+                    self.log.warning(
+                        "ALERT card btn hidden text=%s reasons=%s",
+                        btn.text(),
+                        ",".join(reasons),
+                    )
+            buttons_box = card.findChild(QWidget, "EventButtons")
+            if buttons_box is not None:
+                self.log.info(
+                    "ALERT buttons box visible=%s geom=%s size=%sx%s min=%sx%s hint=%s",
+                    buttons_box.isVisible(),
+                    buttons_box.geometry(),
+                    buttons_box.width(),
+                    buttons_box.height(),
+                    buttons_box.minimumWidth(),
+                    buttons_box.minimumHeight(),
+                    buttons_box.sizeHint(),
+                )
+            if layout_count > 0 and size.height() > 0:
+                self.log.info("ALERT_UI_RENDER_OK id=%s", id(card))
+            else:
+                self.log.warning("ALERT_UI_RENDER_BROKEN reason=layout_or_size")
+        except Exception as e:  # noqa: BLE001
+            self.log.warning("ALERT card layout log failed: %s", e)
+
+    def _alert_button_click(
+        self,
+        event_id: str,
+        action: str,
+        minutes: int | None = None,
+        event: Event | None = None,
+    ) -> None:
+        self.log.info("ALERT_BTN_CLICK id=%s action=%s minutes=%s", event_id, action, minutes)
+        if action == "snooze" and minutes is not None:
+            QTimer.singleShot(0, self, lambda: self._alert_snooze(event_id, minutes))
+            return
+        if action == "stop":
+            QTimer.singleShot(0, self, lambda: self._alert_stop(event_id, "user"))
+            return
+        if action == "restart" and event is not None:
+            QTimer.singleShot(0, self, lambda: self._alert_restart(event))
+
+    def _show_alert_popup(self, event: Event, title: str, body: str) -> bool:
+        ui = self.settings.get("ui", {}) or {}
+        existing = self._alert_popups.get(event.id)
+        if existing is not None:
+            try:
+                existing.close()
+            except Exception:
+                pass
+        actions: list[QPushButton] = []
+        settings = get_alert_settings(self.settings)
+        default_minutes = int(settings.get("snooze_default_minutes", 5))
+        snooze_btn = QPushButton(tr("btn_alert_snooze", self.language))
+        self._tune_alert_button(snooze_btn, role="snooze")
+        snooze_btn.clicked.connect(lambda: self._alert_button_click(event.id, "snooze", default_minutes))
+        actions.append(snooze_btn)
+        stop_btn = QPushButton(tr("btn_alert_stop", self.language))
+        self._tune_alert_button(stop_btn, role="stop")
+        stop_btn.clicked.connect(lambda: self._alert_button_click(event.id, "stop"))
+        actions.append(stop_btn)
+        if settings.get("timer_restart_enabled", True):
+            restart_btn = QPushButton(tr("btn_alert_repeat", self.language))
+            self._tune_alert_button(restart_btn, role="restart")
+            restart_btn.clicked.connect(lambda: self._alert_button_click(event.id, "restart", event=event))
+            actions.append(restart_btn)
+        popup = AlertPopup(None, title, body, actions)
+        popup.setMinimumWidth(420)
+        popup.set_auto_close(int(ui.get("alert_popup_auto_close_sec", 20)))
+        popup.destroyed.connect(lambda: self._alert_popups.pop(event.id, None))
+        popup.show_centered()
+        popup.raise_()
+        popup.activateWindow()
+        self._alert_popups[event.id] = popup
+        self.log.info("ALERT_UI_POPUP_SHOWN id=%s", event.id)
+        return True
+
+    def _show_alert_inline(self, event: Event, title: str, body: str) -> None:
+        existing = self._alert_inlines.get(event.id)
+        if existing is not None:
+            try:
+                existing.setParent(None)
+            except Exception:
+                pass
+        actions: list[QPushButton] = []
+        settings = get_alert_settings(self.settings)
+        default_minutes = int(settings.get("snooze_default_minutes", 5))
+        snooze_btn = QPushButton(tr("btn_alert_snooze", self.language))
+        self._tune_alert_button(snooze_btn, role="snooze")
+        snooze_btn.clicked.connect(lambda: self._alert_button_click(event.id, "snooze", default_minutes))
+        actions.append(snooze_btn)
+        stop_btn = QPushButton(tr("btn_alert_stop", self.language))
+        self._tune_alert_button(stop_btn, role="stop")
+        stop_btn.clicked.connect(lambda: self._alert_button_click(event.id, "stop"))
+        actions.append(stop_btn)
+        if settings.get("timer_restart_enabled", True):
+            restart_btn = QPushButton(tr("btn_alert_repeat", self.language))
+            self._tune_alert_button(restart_btn, role="restart")
+            restart_btn.clicked.connect(lambda: self._alert_button_click(event.id, "restart", event=event))
+            actions.append(restart_btn)
+        inline = AlertInlineWidget(title, body, actions)
+        anchor = self._event_anchors.get(event.id)
+        if anchor is not None:
+            idx = self.chat_container_layout.indexOf(anchor)
+            if idx >= 0:
+                self.chat_container_layout.insertWidget(idx + 1, inline)
+                self._highlight_anchor(anchor)
+            else:
+                self.chat_container_layout.insertWidget(0, inline)
+        else:
+            self.chat_container_layout.insertWidget(0, inline)
+        self._alert_inlines[event.id] = inline
+        self.log.info("ALERT_UI_INLINE_SHOWN id=%s", event.id)
+
+    def _update_alert_inline_status(self, event_id: str, text: str) -> None:
+        inline = self._alert_inlines.get(event_id)
+        if inline is None:
+            return
+        inline.set_status(text)
 
     def _alert_snooze(self, event_id: str, minutes: int) -> None:
         minutes = max(1, int(minutes))
         event = self.app_context.scheduler.get_event(event_id)
         if not event:
+            self._append_message(tr("msg_event_not_found", self.language), is_user=False)
             return
         event.snooze_count += 1
         new_due = datetime.now() + timedelta(minutes=minutes)
         ok = self.app_context.scheduler.reschedule_event(event_id, new_due)
         if ok:
-            self._alert_stop(event_id, "snooze")
+            self._alert_stop(event_id, "snooze", emit_msg=False)
             self._update_event_card(event_id, tr("msg_snoozed", self.language).format(minutes=minutes))
+            time_text = new_due.strftime("%H:%M")
+            msg_key = {
+                "timer": "msg_timer_snoozed",
+                "alarm": "msg_alarm_snoozed",
+                "reminder": "msg_reminder_snoozed",
+            }.get(str(event.type), "msg_reminder_snoozed")
+            status_text = tr(msg_key, self.language).format(minutes=minutes, time=time_text)
+            self._update_alert_inline_status(event_id, status_text)
+            self._append_message(status_text, is_user=False)
+            self.log.info("ALERT_ACTION_DONE action=snooze id=%s", event_id)
             self.log.info("ALERT snooze id=%s minutes=%s", event_id, minutes)
 
     def _alert_restart(self, event: Event) -> None:
-        new_id = self.app_context.scheduler.restart_timer(event.id)
-        if not new_id:
-            return
-        self._alert_stop(event.id, "restart")
-        self._update_event_card(event.id, tr("msg_timer_restarted", self.language))
-        self.log.info("ALERT restart id=%s new_id=%s", event.id, new_id)
+        kind = str(event.type)
+        new_id = None
+        if kind == "timer":
+            new_id = self.app_context.scheduler.restart_timer(event.id)
+        elif kind == "reminder":
+            delay = int(event.payload.get("delay_sec") or event.payload.get("duration_sec") or 0)
+            text = str(event.payload.get("text", ""))
+            if delay > 0:
+                new_id = self.app_context.scheduler.schedule_in(
+                    delay,
+                    tr("msg_reminder_prefix", self.language).format(text=text),
+                    meta={"type": "reminder", "text": text, "delay_sec": delay},
+                )
+        elif kind == "alarm":
+            time_text = str(event.payload.get("time") or "")
+            when = parse_time_of_day(time_text) if time_text else None
+            if when is not None:
+                seconds = max(0, int((when - datetime.now()).total_seconds()))
+                new_id = self.app_context.scheduler.schedule_in(
+                    seconds,
+                    tr("msg_alarm_fired", self.language),
+                    meta={"type": "alarm", "time": time_text},
+                )
 
-    def _alert_stop(self, event_id: str, reason: str) -> None:
+        if not new_id:
+            self.log.warning("ALERT restart failed: id=%s type=%s", event.id, kind)
+            type_label = self._event_type_label(kind)
+            self._append_message(tr("msg_action_unavailable_type", self.language).format(type=type_label), is_user=False)
+            return
+        self._alert_stop(event.id, "restart", emit_msg=False)
+        self._update_event_card(event.id, tr("msg_timer_restarted", self.language))
+        duration = self._format_duration(event.duration_sec or 0)
+        status_text = tr("msg_timer_restarted_detail", self.language).format(duration=duration)
+        self._update_alert_inline_status(event.id, status_text)
+        self._append_message(status_text, is_user=False)
+        self.log.info("ALERT_ACTION_DONE action=restart id=%s", event.id)
+        self.log.info("ALERT restart id=%s type=%s new_id=%s", event.id, kind, new_id)
+
+    def _alert_stop(self, event_id: str, reason: str, emit_msg: bool = True) -> None:
         self._stop_alert_sound()
-        self.app_context.scheduler.dismiss_event(event_id)
+        event = self.app_context.scheduler.get_event(event_id)
+        ok = self.app_context.scheduler.dismiss_event(event_id)
         self._update_event_card(event_id, tr("msg_alert_stopped", self.language))
         self._active_alert_meta = None
+        self._close_alert_popup(event_id)
+        if emit_msg and ok and event is not None:
+            msg_key = {
+                "timer": "msg_timer_stopped",
+                "alarm": "msg_alarm_stopped",
+                "reminder": "msg_reminder_cancelled",
+            }.get(str(event.type), "msg_reminder_cancelled")
+            status_text = tr(msg_key, self.language)
+            self._update_alert_inline_status(event_id, status_text)
+            self._append_message(status_text, is_user=False)
+            self.log.info("ALERT_ACTION_DONE action=stop id=%s", event_id)
+        elif emit_msg and not ok:
+            self._append_message(tr("msg_event_not_found", self.language), is_user=False)
         self.log.info("ALERT stop id=%s reason=%s", event_id, reason)
 
     def _alert_stop_all(self) -> None:
         self._stop_alert_sound()
         count = self.app_context.scheduler.dismiss_all()
+        for event_id in list(self._alert_popups.keys()):
+            self._close_alert_popup(event_id)
+        for event_id in list(self._alert_inlines.keys()):
+            self._close_alert_inline(event_id)
         for event_id in list(self._event_cards.keys()):
             self._update_event_card(event_id, tr("msg_alert_stopped", self.language))
         if count:
@@ -1136,6 +2857,42 @@ class AntoshkaWindow(QMainWindow):
                 msg = "All alerts disabled."
             self._notify(msg)
         self.log.info("ALERT stop_all count=%s", count)
+
+    def _close_alert_popup(self, event_id: str) -> None:
+        popup = self._alert_popups.pop(event_id, None)
+        if popup is None:
+            return
+        try:
+            popup.close()
+        except Exception:
+            pass
+
+    def _close_alert_inline(self, event_id: str) -> None:
+        inline = self._alert_inlines.pop(event_id, None)
+        if inline is None:
+            return
+        try:
+            inline.setVisible(False)
+            QTimer.singleShot(800, self, lambda w=inline: w.setParent(None))
+        except Exception:
+            pass
+
+    def _highlight_anchor(self, widget: QWidget) -> None:
+        try:
+            widget.setProperty("highlight", True)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            QTimer.singleShot(1500, self, lambda w=widget: self._clear_highlight(w))
+        except Exception:
+            pass
+
+    def _clear_highlight(self, widget: QWidget) -> None:
+        try:
+            widget.setProperty("highlight", False)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+        except Exception:
+            pass
 
     def _update_event_card(self, event_id: str, status: str) -> None:
         item = self._event_cards.get(event_id)
@@ -1149,9 +2906,11 @@ class AntoshkaWindow(QMainWindow):
     def _notify_system_event(self, event: Event, message_text: str) -> None:
         ui = self.settings.get("ui", {}) or {}
         if not bool(ui.get("system_notifications", True)):
+            self.log.info("NOTIFY_SKIP reason=disabled type=%s id=%s", event.type, event.id)
             return
         show_text = bool(ui.get("notify_show_text", True))
         show_icon = bool(ui.get("notify_show_icon", True))
+        dup_tray = bool(ui.get("notify_tray_fallback_dup", True))
         kind = event.type
         if kind == "timer":
             title = f"{tr('app_name', self.language)} — {tr('action_timer_title', self.language)}"
@@ -1178,9 +2937,13 @@ class AntoshkaWindow(QMainWindow):
             action_stop_args=action_stop_args,
         )
         self.log.info("NOTIFY_START type=%s id=%s", kind, event.id)
-        ok = self.notifier.notify(payload)
+        ok = self.notifier.notify(payload, dup_tray=dup_tray)
         if ok:
             self.log.info("NOTIFY_OK type=%s id=%s", kind, event.id)
+        else:
+            self.log.warning("NOTIFY_FAIL type=%s id=%s", kind, event.id)
+            if self.debug_mode:
+                self._append_message(tr("msg_notify_failed", self.language), is_user=False)
 
     def _on_notification_action(self, action: str, event_id: str, event_type: str) -> None:
         def _run() -> None:
@@ -1203,11 +2966,11 @@ class AntoshkaWindow(QMainWindow):
                     self._alert_snooze(event_id, default_min)
                     handled = True
             if handled:
-            msg = tr("msg_alert_handled", self.language)
-            self._notify(msg)
-        else:
-            msg = tr("msg_event_not_found", self.language)
-            self._notify(msg)
+                msg = tr("msg_alert_handled", self.language)
+                self._notify(msg)
+            else:
+                msg = tr("msg_event_not_found", self.language)
+                self._notify(msg)
 
         QTimer.singleShot(0, _run)
 
@@ -1227,16 +2990,26 @@ class AntoshkaWindow(QMainWindow):
         if not bool(settings.get("alerts_enabled", True)):
             return
         rel = str(settings.get("alerts_sound", ""))
+        custom_path = str(settings.get("alerts_sound_path", ""))
         volume = int(settings.get("alerts_volume", 80))
         loop = bool(settings.get("alerts_loop", True))
-        self._play_alert_sound(rel, volume, loop=loop, test=False)
+        path = custom_path or rel
+        if custom_path and not Path(custom_path).exists():
+            self.log.warning("Custom alert sound missing: %s", custom_path)
+            path = rel
+        self._play_alert_sound(path, volume, loop=loop, test=False)
 
     def _play_alert_sound(self, rel_path: str, volume: int, loop: bool, test: bool = False) -> None:
-        if not rel_path:
+        raw = (rel_path or "").strip()
+        if not raw:
             return
-        path = resource_path(Path(rel_path))
+        path = Path(raw)
+        if not path.is_absolute():
+            path = resource_path(Path(raw))
         if not path.exists():
-            self.log.warning("Alert sound not found: %s", rel_path)
+            self.log.warning("Alert sound not found: %s", raw)
+            if test:
+                self._notify(tr("msg_alert_sound_missing", self.language))
             return
         self.alert_player.set_volume(volume)
         self.alert_player.play(path, loop=loop)
@@ -1279,6 +3052,83 @@ class AntoshkaWindow(QMainWindow):
         self.log.info("UI send text: len=%s", len(text))
         self._process_text(text, from_voice=False)
 
+    def _insert_command(self, text: str) -> None:
+        self.input.setText(text)
+        self.input.setFocus()
+        self.input.setCursorPosition(len(text))
+
+    def _send_command(self, text: str) -> None:
+        self._process_text(text, from_voice=False)
+
+    def _log_suggestion_click(self, text: str, mode: str) -> None:
+        self.log.info("SUGGESTION_CLICK text=%s mode=%s", text, mode)
+
+    def _set_suggestion_context(self, context: str) -> None:
+        self._suggestion_context = context or "default"
+        self._update_suggestions()
+
+    def _update_suggestion_context_from_action(self, action: str) -> None:
+        action = str(action or "").lower()
+        if action in {"timer_set", "alarm_set", "reminder_set"}:
+            self._set_suggestion_context("timers")
+            return
+        if action.startswith("note_"):
+            self._set_suggestion_context("notes")
+            return
+        if action.startswith("settings_"):
+            self._set_suggestion_context("settings")
+            return
+        if action in {"help"}:
+            self._set_suggestion_context("default")
+            return
+        if action in {"open_url", "open_map", "open_mail", "open_calendar", "search_web"}:
+            self._set_suggestion_context("default")
+            return
+        if action in {"open_app", "open_path", "screenshot", "volume_set"}:
+            self._set_suggestion_context("default")
+            return
+        self._set_suggestion_context("default")
+
+    def _update_suggestions(self, force_reload: bool = False) -> None:
+        if not hasattr(self, "suggestions_bar"):
+            return
+        enabled = bool(self.settings.get("ui", {}).get("suggestions_enabled", True))
+        if not enabled:
+            self.suggestions_bar.hide()
+            if hasattr(self, "suggestions_refresh"):
+                self.suggestions_refresh.hide()
+            return
+        self.suggestions_bar.show()
+        if hasattr(self, "suggestions_refresh"):
+            self.suggestions_refresh.show()
+        ctx = self._suggestion_context or "default"
+        registry = getattr(self.dialogue, "router", None).registry if self.dialogue else None
+        items = []
+        if registry is not None:
+            items = pick_suggestions(registry, self.language, ctx, k=5)
+        send_on_click = bool(self.settings.get("ui", {}).get("suggestions_send_on_click", False))
+        tip_insert = tr("suggestion_tip_insert", self.language)
+        tip_send = tr("suggestion_tip_send", self.language)
+        self.suggestions_bar.set_suggestions(items, send_on_click, tip_insert, tip_send)
+        if hasattr(self, "suggestions_refresh"):
+            self.suggestions_refresh.setToolTip(tr("suggestion_refresh", self.language))
+
+    def _format_duration(self, seconds: int) -> str:
+        seconds = max(0, int(seconds))
+        if seconds >= 60:
+            minutes = max(1, int(round(seconds / 60)))
+            if (self.language or "ru").lower() == "en":
+                return f"{minutes} min"
+            return f"{minutes} мин"
+        if (self.language or "ru").lower() == "en":
+            return f"{seconds} sec"
+        return f"{seconds} сек"
+
+    def _event_type_label(self, event_type: str) -> str:
+        if (self.language or "ru").lower() == "en":
+            return {"timer": "Timer", "alarm": "Alarm", "reminder": "Reminder"}.get(event_type, "Event")
+        return {"timer": "таймер", "alarm": "будильник", "reminder": "напоминание"}.get(event_type, "событие")
+
     def _process_text(self, text: str, from_voice: bool = False) -> None:
         if self._first_message:
             self._first_message = False
@@ -1292,16 +3142,26 @@ class AntoshkaWindow(QMainWindow):
             self.log.info("Voice request start: len=%s", len(text))
             request_id = self._start_voice_timeout(lang)
 
+        allow_llm = bool(self.ai_mode and self.llm_client is not None)
+        route = self.dialogue.router.route(text, lang=lang)
+        needs_llm = allow_llm and route is None
+        if needs_llm and self.llm_client is not None:
+            if self.llm_client.is_busy() or self._llm_queue:
+                self._llm_queue.append((text, lang))
+                msg = tr("msg_ai_queued", self.language).format(position=len(self._llm_queue))
+                self._append_message(msg, is_user=False)
+                self._set_status("ready")
+                return
+
         def _worker() -> None:
             try:
-                if self.ai_mode and self.llm_client is not None:
-                    append_chat(Path("data"), "user", text)
-                    answer = self.llm_client.ask(text)
-                    append_chat(Path("data"), "assistant", answer)
-                elif self.ai_mode and self.llm_client is None:
-                    answer = tr("msg_ai_unavailable_cmd", lang)
-                else:
-                    answer = self.dialogue.handle_text(text, language=lang)
+                if needs_llm:
+                    QTimer.singleShot(0, self, lambda: self._set_ai_busy(True))
+                answer = self.dialogue.handle_text(
+                    text,
+                    language=lang,
+                    allow_llm=allow_llm,
+                )
             except Exception as e:  # noqa: BLE001
                 self.log.exception("UI worker failed: %s", e)
                 answer = tr("msg_error_generic", lang)
@@ -1310,6 +3170,10 @@ class AntoshkaWindow(QMainWindow):
                 answer_text = answer.to_text()
             else:
                 answer_text = str(answer)
+            unknown_reply = answer_text.strip() == tr("msg_unknown_command", lang).strip()
+            if allow_llm:
+                append_chat(data_dir(), "user", text)
+                append_chat(data_dir(), "assistant", answer_text)
 
             if not answer_text.strip():
                 answer = tr("msg_unknown_command", lang)
@@ -1328,6 +3192,12 @@ class AntoshkaWindow(QMainWindow):
                     return
                 if request_id is not None:
                     self.log.info("Response received: id=%s", request_id)
+                if needs_llm:
+                    self._set_ai_busy(False)
+                if isinstance(answer, ActionResult):
+                    self.log.info("UI update: action=%s status=%s", answer.action, answer.status)
+                else:
+                    self.log.info("UI update: message_len=%s", len(answer_text))
                 if isinstance(answer, ActionResult) and answer.action == "clear_chat":
                     self._clear_chat_flow()
                     self._set_status("ready")
@@ -1336,9 +3206,15 @@ class AntoshkaWindow(QMainWindow):
                     self._append_action(answer)
                 else:
                     self._append_message(answer_text, is_user=False)
+                if unknown_reply:
+                    self._set_suggestion_context("unknown_fallback")
                 self._set_status("speaking")
+                self.log.info("TTS start: len=%s lang=%s", len(answer_text), lang)
                 self._say_tts_async(answer_text, lang)
                 self._set_status("ready")
+                if needs_llm and self._llm_queue:
+                    next_text, next_lang = self._llm_queue.pop(0)
+                    QTimer.singleShot(0, self, lambda: self._process_text(next_text, from_voice=False))
 
             QTimer.singleShot(0, self, _update)
 
@@ -1455,6 +3331,42 @@ class AntoshkaWindow(QMainWindow):
         else:
             self._listen()
 
+    def _open_about(self, parent: QWidget | None = None) -> None:
+        lang = self.language
+        tech = self._about_tech_info(lang)
+        host = parent if parent is not None else self
+        dlg = AboutDialog(host, lang, tech)
+        dlg.exec()
+
+    def _about_tech_info(self, lang: str) -> dict[str, str]:
+        tts_raw = self.settings.get("tts", {}) or {}
+        llm_raw = self.settings.get("llm", {}) or {}
+        stt_mode = (self.settings.get("stt", {}) or {}).get("mode", "")
+        stt_name = type(self.stt).__name__ if getattr(self, "stt", None) is not None else "unknown"
+        tts_provider = str(tts_raw.get("provider", "auto"))
+        llm_provider = str(llm_raw.get("provider", "none"))
+        llm_model = str(llm_raw.get("model", ""))
+        ai_enabled = self.llm_client is not None
+        if (lang or "ru").lower() == "en":
+            ai_status = "AI enabled" if ai_enabled else "AI unavailable"
+            info = {
+                "STT": f"{stt_name} ({stt_mode})" if stt_mode else stt_name,
+                "TTS": tts_provider,
+                "LLM": f"{llm_provider} {llm_model}".strip(),
+                "AI": ai_status,
+                "Logs": str(logs_dir()),
+            }
+        else:
+            ai_status = "ИИ включён" if ai_enabled else "ИИ недоступен"
+            info = {
+                "Распознавание речи": f"{stt_name} ({stt_mode})" if stt_mode else stt_name,
+                "Озвучка": tts_provider,
+                "Модель ИИ": f"{llm_provider} {llm_model}".strip(),
+                "Статус ИИ": ai_status,
+                "Логи": str(logs_dir()),
+            }
+        return info
+
     def _open_settings(self) -> None:
         self.log.info("UI open settings")
         dlg = QDialog(self)
@@ -1508,6 +3420,23 @@ class AntoshkaWindow(QMainWindow):
             helper.setObjectName("HelperText")
             helper.setWordWrap(True)
             card_layout.addWidget(helper)
+
+        # Information
+        info_card, info_grid = card(tr("section_info", self.language))
+        info_row = 0
+        about_btn = QPushButton(tr("btn_about", self.language))
+        about_btn.clicked.connect(lambda: self._open_about(dlg))
+        info_row = add_row(info_grid, info_row, tr("btn_about", self.language), about_btn)
+
+        # Chat
+        chat_card, chat_grid = card(tr("section_chat", self.language))
+        chat_row = 0
+        suggest_enabled = QCheckBox("")
+        suggest_enabled.setChecked(bool(self.settings.get("ui", {}).get("suggestions_enabled", True)))
+        suggest_send = QCheckBox("")
+        suggest_send.setChecked(bool(self.settings.get("ui", {}).get("suggestions_send_on_click", False)))
+        chat_row = add_row(chat_grid, chat_row, tr("label_show_suggestions", self.language), suggest_enabled)
+        chat_row = add_row(chat_grid, chat_row, tr("label_suggest_send_on_click", self.language), suggest_send)
 
         # Language & STT
         lang_card, lang_grid = card(tr("section_language", self.language))
@@ -1570,8 +3499,8 @@ class AntoshkaWindow(QMainWindow):
         if wake_was_active:
             try:
                 self.wake_listener.stop()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                self.log.exception("Wake word stop failed: %s", e)
         mic_monitor = MicLevelMonitor(device=mic_combo.currentData())
         mic_monitor.start()
         mic_timer = QTimer(dlg)
@@ -1695,6 +3624,41 @@ class AntoshkaWindow(QMainWindow):
         tts_row = add_row(tts_grid, tts_row, tr("btn_test_tts", self.language), tts_test)
         add_helper(tts_card, tr("helper_tts", self.language))
 
+        # AI
+        ai_card, ai_grid = card(tr("section_ai", self.language))
+        ai_row = 0
+        ai_check_btn = QPushButton(tr("btn_ai_check", self.language))
+        ai_status = QLabel("")
+        ai_status.setObjectName("HelperText")
+
+        def _ai_check() -> None:
+            if self.llm_client is None:
+                msg = tr("msg_ai_missing_key", self.language)
+                ai_status.setText(msg)
+                self._append_message(msg, is_user=False)
+                self.log.warning("AI check failed: missing key")
+                return
+
+            def _worker() -> None:
+                ok, reason = self.llm_client.test_connection()
+                msg = self._ai_check_message(ok, reason)
+                if ok:
+                    self.log.info("AI check ok")
+                else:
+                    self.log.warning("AI check failed: %s", reason)
+
+                def _update() -> None:
+                    ai_status.setText(msg)
+                    self._append_message(msg, is_user=False)
+
+                QTimer.singleShot(0, dlg, _update)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        ai_check_btn.clicked.connect(_ai_check)
+        ai_row = add_row(ai_grid, ai_row, tr("btn_ai_check", self.language), ai_check_btn)
+        ai_card.addWidget(ai_status)
+
         # Alerts
         alerts_card, alerts_grid = card(tr("section_alerts", self.language))
         alerts_row = 0
@@ -1704,20 +3668,64 @@ class AntoshkaWindow(QMainWindow):
         alerts_loop = QCheckBox("")
         alerts_loop.setChecked(bool(alert_settings.get("alerts_loop", True)))
         alerts_sound = QComboBox()
-        sounds = list_alert_sounds()
-        if not sounds:
-            alerts_sound.addItem("default", "")
-        else:
-            for s in sounds:
-                alerts_sound.addItem(s.label, s.rel)
-        current_sound = str(alert_settings.get("alerts_sound", ""))
-        idx_sound = alerts_sound.findData(current_sound)
-        if idx_sound >= 0:
-            alerts_sound.setCurrentIndex(idx_sound)
+        custom_list = QListWidget()
+        custom_list.setMinimumHeight(90)
+
+        def _normalize_custom(items: list) -> list[dict]:
+            out: list[dict] = []
+            for item in items:
+                if isinstance(item, str):
+                    path = item
+                    name = Path(path).stem
+                elif isinstance(item, dict):
+                    path = str(item.get("path") or "")
+                    name = str(item.get("name") or Path(path).stem)
+                else:
+                    continue
+                if path:
+                    out.append({"name": name or Path(path).stem, "path": path})
+            return out
+
+        custom_sounds = _normalize_custom(alert_settings.get("alerts_custom_sounds", []))
+
+        def _refresh_sounds(select_path: str | None = None) -> None:
+            alerts_sound.clear()
+            custom_list.clear()
+            sounds = list_alert_sounds()
+            if not sounds:
+                alerts_sound.addItem("default", "")
+            else:
+                for s in sounds:
+                    rel = str(s.rel)
+                    path = resource_path(Path(rel))
+                    label = s.label
+                    if not path.exists():
+                        label = f"{label} (missing)"
+                    alerts_sound.addItem(label, rel)
+            for item in custom_sounds:
+                path = Path(item.get("path", ""))
+                if not str(path):
+                    continue
+                label = str(item.get("name") or path.stem)
+                display = label if path.exists() else f"{label} (missing)"
+                alerts_sound.addItem(display, str(path))
+            for item in custom_sounds:
+                name = item.get("name") or Path(item.get("path", "")).stem
+                path = Path(item.get("path", ""))
+                suffix = "" if path.exists() else " (missing)"
+                custom_list.addItem(f"{name}{suffix}")
+            target = select_path or str(alert_settings.get("alerts_sound_path") or "") or str(alert_settings.get("alerts_sound") or "")
+            idx = alerts_sound.findData(target)
+            if idx >= 0:
+                alerts_sound.setCurrentIndex(idx)
+
+        _refresh_sounds()
         alerts_volume = QSlider(Qt.Horizontal)
         alerts_volume.setRange(0, 100)
         alerts_volume.setValue(int(alert_settings.get("alerts_volume", 80)))
         alerts_test = QPushButton(tr("btn_test_alert", self.language))
+        alerts_add = QPushButton(tr("btn_add_sound", self.language))
+        alerts_delete = QPushButton(tr("btn_delete_sound", self.language))
 
         def _test_alert() -> None:
             self._play_alert_sound(
@@ -1727,9 +3735,41 @@ class AntoshkaWindow(QMainWindow):
                 test=True,
             )
 
+        def _add_alert_sound() -> None:
+            file_path, _ = QFileDialog.getOpenFileName(
+                dlg,
+                tr("btn_add_sound", self.language),
+                str(Path.home()),
+                "Audio Files (*.mp3 *.wav *.ogg)",
+            )
+            if not file_path:
+                return
+            path = str(Path(file_path))
+            if any(item.get("path") == path for item in custom_sounds):
+                _refresh_sounds(path)
+                return
+            custom_sounds.append({"name": Path(path).stem, "path": path})
+            _refresh_sounds(path)
+
+        def _delete_alert_sound() -> None:
+            row = custom_list.currentRow()
+            if row < 0 or row >= len(custom_sounds):
+                return
+            removed = custom_sounds.pop(row)
+            current = str(alerts_sound.currentData() or "")
+            if current == removed.get("path"):
+                _refresh_sounds()
+            else:
+                _refresh_sounds(current)
+
         alerts_test.clicked.connect(_test_alert)
+        alerts_add.clicked.connect(_add_alert_sound)
+        alerts_delete.clicked.connect(_delete_alert_sound)
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_alerts_enabled", self.language), alerts_enabled)
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_alerts_sound", self.language), alerts_sound)
+        alerts_row = add_row(alerts_grid, alerts_row, tr("label_alerts_custom", self.language), custom_list)
+        alerts_row = add_row(alerts_grid, alerts_row, tr("btn_add_sound", self.language), alerts_add)
+        alerts_row = add_row(alerts_grid, alerts_row, tr("btn_delete_sound", self.language), alerts_delete)
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_alerts_volume", self.language), alerts_volume)
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_alerts_loop", self.language), alerts_loop)
         alerts_row = add_row(alerts_grid, alerts_row, tr("btn_test_alert", self.language), alerts_test)
@@ -1740,7 +3780,14 @@ class AntoshkaWindow(QMainWindow):
         notify_show_text.setChecked(bool(alert_settings.get("notify_show_text", True)))
         notify_show_icon = QCheckBox("")
         notify_show_icon.setChecked(bool(alert_settings.get("notify_show_icon", True)))
+        notify_tray_dup = QCheckBox("")
+        notify_tray_dup.setChecked(bool(alert_settings.get("notify_tray_fallback_dup", True)))
         notify_test = QPushButton(tr("btn_test_notify", self.language))
+        alert_popup_enabled = QCheckBox("")
+        alert_popup_enabled.setChecked(bool(alert_settings.get("alert_popup_enabled", True)))
+        alert_popup_timeout = QSpinBox()
+        alert_popup_timeout.setRange(0, 120)
+        alert_popup_timeout.setValue(int(alert_settings.get("alert_popup_auto_close_sec", 20)))
 
         def _test_notify() -> None:
             event = Event(type="timer", due_time=datetime.now(), payload={"message": "test"})
@@ -1751,7 +3798,10 @@ class AntoshkaWindow(QMainWindow):
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_system_notifications", self.language), notify_enabled)
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_notify_text", self.language), notify_show_text)
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_notify_icon", self.language), notify_show_icon)
+        alerts_row = add_row(alerts_grid, alerts_row, tr("label_notify_tray_dup", self.language), notify_tray_dup)
         alerts_row = add_row(alerts_grid, alerts_row, tr("btn_test_notify", self.language), notify_test)
+        alerts_row = add_row(alerts_grid, alerts_row, tr("label_alert_popup", self.language), alert_popup_enabled)
+        alerts_row = add_row(alerts_grid, alerts_row, tr("label_alert_popup_timeout", self.language), alert_popup_timeout)
 
         snooze_default = QSpinBox()
         snooze_default.setRange(1, 30)
@@ -1823,6 +3873,8 @@ class AntoshkaWindow(QMainWindow):
                 wake_word.isChecked(),
                 alerts_enabled.isChecked(),
                 str(alerts_sound.currentData() or ""),
+                str(alerts_sound.currentText() or ""),
+                [item for item in custom_sounds],
                 alerts_volume.value(),
                 alerts_loop.isChecked(),
                 snooze_default.value(),
@@ -1834,10 +3886,15 @@ class AntoshkaWindow(QMainWindow):
                 notify_enabled.isChecked(),
                 notify_show_text.isChecked(),
                 notify_show_icon.isChecked(),
+                notify_tray_dup.isChecked(),
+                alert_popup_enabled.isChecked(),
+                alert_popup_timeout.value(),
                 theme_preset.currentText(),
                 accent_input.text().strip(),
                 intensity_slider.value(),
                 show_start.isChecked(),
+                suggest_enabled.isChecked(),
+                suggest_send.isChecked(),
                 voice_timeout.value(),
             )
             save_state.setText(tr("settings_saved", self.language))
@@ -1877,7 +3934,9 @@ class AntoshkaWindow(QMainWindow):
         voice_en: str,
         wake_word: bool,
         alerts_enabled: bool,
-        alerts_sound: str,
+        alerts_sound_path: str,
+        alerts_sound_name: str,
+        alerts_custom_sounds: list[dict],
         alerts_volume: int,
         alerts_loop: bool,
         snooze_default_minutes: int,
@@ -1889,10 +3948,15 @@ class AntoshkaWindow(QMainWindow):
         notify_enabled: bool,
         notify_show_text: bool,
         notify_show_icon: bool,
+        notify_tray_dup: bool,
+        alert_popup_enabled: bool,
+        alert_popup_timeout: int,
         theme_preset: str,
         accent_color: str,
         intensity_value: int,
         show_start: bool,
+        suggestions_enabled: bool,
+        suggestions_send_on_click: bool,
         voice_timeout: int,
     ) -> None:
         lang_mode = (lang_mode_text or "auto").lower()
@@ -1911,7 +3975,15 @@ class AntoshkaWindow(QMainWindow):
         self.settings.setdefault("tts", {})["voice_name_contains_en"] = voice_en
         self.settings.setdefault("ui", {})["wake_word"] = bool(wake_word)
         self.settings.setdefault("ui", {})["alerts_enabled"] = bool(alerts_enabled)
-        self.settings.setdefault("ui", {})["alerts_sound"] = str(alerts_sound or "")
+        raw_path = str(alerts_sound_path or "")
+        if raw_path and Path(raw_path).is_absolute():
+            self.settings.setdefault("ui", {})["alerts_sound_path"] = raw_path
+            self.settings.setdefault("ui", {})["alerts_sound"] = ""
+        else:
+            self.settings.setdefault("ui", {})["alerts_sound"] = raw_path
+            self.settings.setdefault("ui", {})["alerts_sound_path"] = ""
+        self.settings.setdefault("ui", {})["alerts_sound_name"] = str(alerts_sound_name or "")
+        self.settings.setdefault("ui", {})["alerts_custom_sounds"] = list(alerts_custom_sounds or [])
         self.settings.setdefault("ui", {})["alerts_volume"] = int(alerts_volume)
         self.settings.setdefault("ui", {})["alerts_loop"] = bool(alerts_loop)
         self.settings.setdefault("ui", {})["snooze_default_minutes"] = int(snooze_default_minutes)
@@ -1923,10 +3995,15 @@ class AntoshkaWindow(QMainWindow):
         self.settings.setdefault("ui", {})["system_notifications"] = bool(notify_enabled)
         self.settings.setdefault("ui", {})["notify_show_text"] = bool(notify_show_text)
         self.settings.setdefault("ui", {})["notify_show_icon"] = bool(notify_show_icon)
+        self.settings.setdefault("ui", {})["notify_tray_fallback_dup"] = bool(notify_tray_dup)
+        self.settings.setdefault("ui", {})["alert_popup_enabled"] = bool(alert_popup_enabled)
+        self.settings.setdefault("ui", {})["alert_popup_auto_close_sec"] = int(alert_popup_timeout)
         self.settings.setdefault("ui", {})["theme_preset"] = theme_preset.lower()
         self.settings.setdefault("ui", {})["accent_color"] = accent_color
         self.settings.setdefault("ui", {})["background_intensity"] = float(intensity_value) / 100.0
         self.settings.setdefault("ui", {})["show_start_screen"] = bool(show_start)
+        self.settings.setdefault("ui", {})["suggestions_enabled"] = bool(suggestions_enabled)
+        self.settings.setdefault("ui", {})["suggestions_send_on_click"] = bool(suggestions_send_on_click)
         self.settings.setdefault("ui", {})["voice_response_timeout_sec"] = int(voice_timeout)
         self.settings.setdefault("ui", {}).pop("voice_response_timeout", None)
         applied_ms = apply_timeout_ms(int(voice_timeout))
@@ -1946,7 +4023,7 @@ class AntoshkaWindow(QMainWindow):
         dlg.setWindowTitle(tr("title_history", self.language))
         dlg.setMinimumSize(560, 420)
         layout = QVBoxLayout(dlg)
-        history = read_json(Path("data") / "history.json", default=[])
+        history = read_json(data_dir() / "history.json", default=[])
         box = QTextEdit()
         box.setReadOnly(True)
         for item in history:
@@ -1988,7 +4065,10 @@ class AntoshkaWindow(QMainWindow):
 
     def _toggle_ai_mode(self) -> None:
         if self.llm_client is None:
-            self._notify(tr("msg_ai_unavailable", self.language))
+            if self.llm_error and "OPENAI_API_KEY is missing" in self.llm_error:
+                self._notify(tr("msg_ai_missing_key", self.language))
+            else:
+                self._notify(tr("msg_ai_unavailable", self.language))
             return
         self.ai_mode = not self.ai_mode
         self.settings.setdefault("ui", {})["ai_mode"] = bool(self.ai_mode)
