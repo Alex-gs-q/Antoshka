@@ -48,13 +48,14 @@ class NotificationService:
         self.on_action = on_action
         self.tray = tray_fallback
 
-    def notify(self, payload: NotificationPayload) -> bool:
-        ok = False
-        if ToastNotificationManager and XmlDocument and ToastNotification:
-            ok = self._notify_winrt(payload)
-        if not ok:
-            ok = self._notify_tray(payload)
-        return ok
+    def notify(self, payload: NotificationPayload, dup_tray: bool = False, force_tray: bool = False) -> bool:
+        ok_winrt = False
+        ok_tray = False
+        if not force_tray and ToastNotificationManager and XmlDocument and ToastNotification:
+            ok_winrt = self._notify_winrt(payload)
+        if force_tray or (not ok_winrt) or dup_tray:
+            ok_tray = self._notify_tray(payload, reason="dup" if dup_tray and ok_winrt else "fallback")
+        return ok_winrt or ok_tray
 
     def _notify_winrt(self, payload: NotificationPayload) -> bool:
         try:
@@ -108,8 +109,8 @@ class NotificationService:
                     self.on_click()
 
                 toast.add_activated(_on_activated)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                self.log.exception("Toast activation handler failed: %s", e)
             notifier = ToastNotificationManager.create_toast_notifier(self.app_id)
             notifier.show(toast)
             self.log.info("NOTIFY_OK provider=winrt")
@@ -118,12 +119,12 @@ class NotificationService:
             self.log.warning("NOTIFY_FAIL provider=winrt reason=%s", e)
             return False
 
-    def _notify_tray(self, payload: NotificationPayload) -> bool:
+    def _notify_tray(self, payload: NotificationPayload, reason: str = "fallback") -> bool:
         if self.tray is None:
             return False
         try:
             self.tray.showMessage(payload.title, payload.body)
-            self.log.info("NOTIFY_OK provider=tray")
+            self.log.info("NOTIFY_OK provider=tray reason=%s", reason)
             return True
         except Exception as e:  # noqa: BLE001
             self.log.warning("NOTIFY_FAIL provider=tray reason=%s", e)

@@ -10,8 +10,8 @@ from adapters.windows import open_path, open_url, run_app
 from commands.registry import Command, CommandContext, CommandRegistry, compile_patterns
 from core.actions import ActionResult
 from core.config import load_settings, save_settings
-from core.i18n import t as tr, help_lines
-from core.text_norm import normalize_text
+from core.i18n import t as tr
+from core.text_norm import normalize_match_text
 from services.app_catalog import resolve_app
 from services.notes import add_note, list_notes, delete_note, update_note, replace_in_note, find_note_index
 from services.calendar_events import add_event, list_events
@@ -29,6 +29,9 @@ def _cmd(
     parameters_schema: Dict[str, str] | None = None,
     triggers: List[str] | None = None,
     examples: List[str] | None = None,
+    examples_ru: List[str] | None = None,
+    examples_en: List[str] | None = None,
+    group: str | None = None,
 ) -> Command:
     return Command(
         name=name,
@@ -36,6 +39,9 @@ def _cmd(
         patterns=compile_patterns(patterns),
         triggers=triggers or [],
         examples=examples or [],
+        examples_ru=examples_ru or [],
+        examples_en=examples_en or [],
+        group=group or "general",
         parameters_schema=parameters_schema or {},
         handler=handler,
     )
@@ -59,9 +65,13 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="help",
             description="Commands list",
-            patterns=[r"\b(pomoshch|spravka|chto ty umeesh|komandy|pokazhi komandy)\b"],
+            patterns=[
+                r"\b(pomoshch|pomosch|spravka|chto ty umeesh|komandy|pokazhi komandy)\b",
+                r"\b(help|show commands|what can you do|commands|help me|list commands|show help)\b",
+            ],
             triggers=[
                 "pomoshch",
+                "pomosch",
                 "chto ty umeesh",
                 "spravka",
                 "komandy",
@@ -73,15 +83,28 @@ def create_registry() -> CommandRegistry:
                 "kak polzovatsya",
                 "help",
             ],
-            examples=[
-                "antoshka pomoshch",
-                "pomoshch",
-                "chto ty umeesh",
-                "pokazhi komandy",
-                "spravka",
-                "komandy",
-                "help",
+            examples=["help", "show commands"],
+            examples_ru=[
+                "помощь",
+                "покажи команды",
+                "что ты умеешь",
+                "справка",
+                "команды",
+                "список команд",
+                "подскажи команды",
+                "как пользоваться",
             ],
+            examples_en=[
+                "help",
+                "show commands",
+                "what can you do",
+                "commands",
+                "list commands",
+                "show help",
+                "help me",
+                "commands list",
+            ],
+            group="help",
             handler=_handle_help,
         )
     )
@@ -90,7 +113,10 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="greet",
             description="Greeting",
-            patterns=[r"\b(privet|zdravstvuy|dobryy (den|vecher|utro))\b"],
+            patterns=[
+                r"\b(privet|zdravstvuy|dobryy (den|vecher|utro))\b",
+                r"\b(hello|hi|hey|good (morning|afternoon|evening))\b",
+            ],
             triggers=[
                 "privet",
                 "zdravstvuy",
@@ -102,13 +128,10 @@ def create_registry() -> CommandRegistry:
                 "hello",
                 "hi",
             ],
-            examples=[
-                "privet",
-                "privet antoshka",
-                "dobryy den",
-                "dobryy vecher",
-                "zdravstvuy",
-            ],
+            examples=["hello", "hi"],
+            examples_ru=["привет", "привет антошка", "добрый день", "добрый вечер"],
+            examples_en=["hello", "hi", "good morning", "good evening"],
+            group="general",
             handler=_handle_greet,
         )
     )
@@ -117,7 +140,10 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="time",
             description="Current time",
-            patterns=[r"\b(kotoryy chas|skolko vremeni|vremya)\b"],
+            patterns=[
+                r"\b(kotoryy chas|skolko vremeni|vremya)\b",
+                r"\b(what time is it|current time|time)\b",
+            ],
             triggers=[
                 "kotoryy chas",
                 "skolko vremeni",
@@ -127,11 +153,10 @@ def create_registry() -> CommandRegistry:
                 "vremya seychas",
                 "time",
             ],
-            examples=[
-                "skolko vremeni",
-                "kotoryy chas",
-                "skazhi vremya",
-            ],
+            examples=["what time is it", "current time"],
+            examples_ru=["который час", "сколько времени"],
+            examples_en=["what time is it", "current time"],
+            group="general",
             handler=_handle_time,
         )
     )
@@ -140,7 +165,10 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="date",
             description="Current date",
-            patterns=[r"\b(kakaya data|kakoe segodnya chislo|segodnya kakoe chislo|data|den nedeli)\b"],
+            patterns=[
+                r"\b(kakaya data|kakoe segodnya chislo|segodnya kakoe chislo|data|den nedeli)\b",
+                r"\b(what date is it|what day is it|today's date|date)\b",
+            ],
             triggers=[
                 "kakaya data",
                 "kakoe segodnya chislo",
@@ -149,11 +177,10 @@ def create_registry() -> CommandRegistry:
                 "kakoy den nedeli",
                 "den nedeli",
             ],
-            examples=[
-                "kakaya data",
-                "kakoy den nedeli",
-                "skazhi datu",
-            ],
+            examples=["what date is it", "today's date"],
+            examples_ru=["какая дата", "какое сегодня число"],
+            examples_en=["what date is it", "today's date"],
+            group="general",
             handler=_handle_date,
         )
     )
@@ -162,9 +189,15 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="tts_test",
             description="Sound test",
-            patterns=[r"\b(skazhi test|test zvuka|prover zvuk|proverka zvuka)\b"],
+            patterns=[
+                r"\b(skazhi test|test zvuka|prover zvuk|proverka zvuka)\b",
+                r"\b(sound test|test sound|sound check)\b",
+            ],
             triggers=["skazhi test", "test zvuka", "prover zvuk", "proverka zvuka"],
-            examples=["antoshka skazhi test", "test zvuka"],
+            examples=["sound test", "sound check"],
+            examples_ru=["тест звука", "проверка звука"],
+            examples_en=["sound test", "sound check"],
+            group="system",
             handler=_handle_tts_test,
         )
     )
@@ -176,9 +209,13 @@ def create_registry() -> CommandRegistry:
             patterns=[
                 r"\b(otkroy kartu|karta|pokazhi kartu)(\s+(?P<query>.+))?\b",
                 r"\b(pokazhi marshrut|marshrut)\s+(?P<query>.+)\b",
+                r"\b(open|show)\s+map(\s+of)?(\s+(?P<query>.+))?\b",
             ],
             triggers=["otkroy kartu", "pokazhi kartu", "karta", "pokazhi marshrut"],
-            examples=["otkroy kartu", "pokazhi marshrut do doma"],
+            examples=["open map", "show map of london"],
+            examples_ru=["открой карту", "покажи маршрут до дома"],
+            examples_en=["open map", "show map of london"],
+            group="open_web",
             parameters_schema={"query": "optional"},
             handler=_handle_open_map,
         )
@@ -189,13 +226,17 @@ def create_registry() -> CommandRegistry:
             name="search_web",
             description="Web search",
             patterns=[
-                r"\b(naydi|poisk|ishi|pogugli|zagugli)\s+(?P<query>.+)\b",
-                r"\b(naydi v internete|poisk v internete)\s+(?P<query>.+)\b",
                 r"\b(найди|поиск|ищи|погугли|загугли)\s+(?P<query>.+)\b",
                 r"\b(найди в интернете|поиск в интернете)\s+(?P<query>.+)\b",
+                r"\b(naydi|poisk|ishi|pogugli|zagugli)\s+(?P<query>.+)\b",
+                r"\b(naydi v internete|poisk v internete)\s+(?P<query>.+)\b",
+                r"\b(search( the web)?( for)?|google|find)\s+(?P<query>.+)\b",
             ],
             triggers=["naydi", "poisk", "pogugli", "zagugli", "naydi v internete"],
-            examples=["naydi pogodu v moskve", "poisk v internete novosti"],
+            examples=["search the web for news", "google best movies 2025"],
+            examples_ru=["найди в интернете новости", "поиск в интернете погода"],
+            examples_en=["search the web for news", "google best movies 2025", "find weather in london", "search for python tutorial"],
+            group="open_web",
             parameters_schema={"query": "string"},
             handler=_handle_search_web,
         )
@@ -206,17 +247,31 @@ def create_registry() -> CommandRegistry:
             name="open_path",
             description="Open file or folder",
             patterns=[
+                r"\b(открой|открыть)\s+(файл|папку)\s+(?P<path>.+)\b",
+                r"\b(открой|открыть)\s+(?P<path>[a-zA-Z]:\\[^\s].+)\b",
+                r"\b(открой|открыть)\s+(?P<path>.+\.(txt|md|pdf|docx|xlsx|pptx|exe|lnk))\b",
+                r"\b(открой|открыть)\s+(?P<path>загрузки|документы|рабочий стол)\b",
                 r"\b(otkroy|otkryt)\s+(fail|papku)\s+(?P<path>.+)\b",
                 r"\b(otkroy|otkryt)\s+(?P<path>[a-zA-Z]:\\[^\s].+)\b",
                 r"\b(otkroy|otkryt)\s+(?P<path>.+\.(txt|md|pdf|docx|xlsx|pptx|exe|lnk))\b",
                 r"\b(otkroy|otkryt)\s+(?P<path>zagruzki|dokumenty|rabochiy stol|downloads|documents|desktop)\b",
-                r"\b(открой|открыть)\s+(файл|папку)\s+(?P<path>.+)\b",
-                r"\b(открой|открыть)\s+(?P<path>[a-zA-Z]:\\[^\s].+)\b",
-                r"\b(открой|открыть)\s+(?P<path>.+\.(txt|md|pdf|docx|xlsx|pptx|exe|lnk))\b",
-                r"\b(открой|открыть)\s+(?P<path>загрузки|документы|рабочий стол|downloads|documents|desktop)\b",
+                r"\b(open)\s+(file|folder)\s+(?P<path>.+)\b",
+                r"\b(open)\s+file\b",
+                r"\b(open)\s+folder\b",
+                r"\b(open)\s+(?P<path>[a-zA-Z]:\\[^\s].+)\b",
+                r"\b(open)\s+(?P<path>.+\.(txt|md|pdf|docx|xlsx|pptx|exe|lnk))\b",
+                r"\b(open)\s+(?P<path>downloads|documents|desktop)\b",
             ],
             triggers=["otkroy papku", "otkroy fail", "otkroy zagruzki", "otkroy dokumenty"],
-            examples=["otkroy papku zagruzki", "otkroy dokumenty"],
+            examples=["open documents", "open file report.pdf"],
+            examples_ru=[
+                "открой папку документы",
+                "открой загрузки",
+                "открой рабочий стол",
+                "открой файл отчет.pdf",
+            ],
+            examples_en=["open documents", "open file report.pdf", "open downloads", "open desktop"],
+            group="open_apps",
             parameters_schema={"path": "string"},
             handler=_handle_open_path,
         )
@@ -226,9 +281,15 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="screenshot",
             description="Screenshot",
-            patterns=[r"\b(sdelai skrinshot|sdelai snimok ekrana|screenshot)\b"],
-            triggers=["sdelai skrinshot", "sdelai snimok ekrana", "screenshot"],
-            examples=["sdelai skrinshot"],
+            patterns=[
+                r"\b((sdelai|sdelay)\s+skrinshot|(sdelai|sdelay)\s+snimok ekrana|screenshot)\b",
+                r"\b(take a screenshot|screenshot)\b",
+            ],
+            triggers=["sdelai skrinshot", "sdelay skrinshot", "sdelai snimok ekrana", "sdelay snimok ekrana", "screenshot"],
+            examples=["take a screenshot", "screenshot"],
+            examples_ru=["сделай скриншот"],
+            examples_en=["take a screenshot", "screenshot"],
+            group="system",
             handler=_handle_screenshot,
         )
     )
@@ -238,10 +299,12 @@ def create_registry() -> CommandRegistry:
             name="open_url",
             description="Open website",
             patterns=[
-                r"\b(otkroy|otkryt|zaydi|zapusti)\s+(?P<url>https?://\S+)\b",
-                r"\b(otkroy|otkryt|zaydi|zapusti)\s+(sait\s+)?(?P<site>[\w\s]+)\b",
-                r"\b(открой|открыть|зайди|запусти)\s+(?P<url>https?://\S+)\b",
-                r"\b(открой|открыть|зайди|запусти)\s+(сайт\s+)?(?P<site>[\w\s]+)\b",
+                r"\b(открой|открыть|зайди|запусти)\s+(на\s+)?(?P<url>https?://\S+)\b",
+                r"\b(открой|открыть|зайди|запусти)\s+(на\s+)?(сайт\s+)?(?P<site>[\w\s]+)\b",
+                r"\b(otkroy|otkryt|zaydi|zapusti)\s+(na\s+)?(?P<url>https?://\S+)\b",
+                r"\b(otkroy|otkryt|zaydi|zapusti)\s+(na\s+)?(sait\s+)?(?P<site>[\w\s]+)\b",
+                r"\b(open|go to|visit)\s+(?P<url>https?://\S+)\b",
+                r"\b(open|go to|visit)\s+(site\s+)?(?P<site>[\w\s]+)\b",
             ],
             triggers=[
                 "otkroy sait",
@@ -254,13 +317,10 @@ def create_registry() -> CommandRegistry:
                 "otkroy gmail",
                 "otkroy maps",
             ],
-            examples=[
-                "otkroy sait vk",
-                "otkroy youtube",
-                "otkroy https://vk.com",
-                "zaydi na yandex",
-                "otkroy telegram",
-            ],
+            examples=["open youtube", "open google"],
+            examples_ru=["открой ютуб", "открой гугл"],
+            examples_en=["open youtube", "open google", "open telegram", "visit wikipedia"],
+            group="open_web",
             parameters_schema={"url": "optional", "site": "optional"},
             handler=_handle_open_url,
         )
@@ -271,8 +331,8 @@ def create_registry() -> CommandRegistry:
             name="open_mail",
             description="Open mail",
             patterns=[
-                r"\b(otkroy|otkryt|zaydi)\s+(pochtu|gmail|pochta|yandex|yandeks|outlook|icloud|yahoo|proton|mail\.ru|zoho|fastmail|tuta)\b",
-                r"\b(открой|открыть|зайди)\s+(почту|джимейл|gmail|яндекс|яндекса|аутлук|icloud|айклауд|яху|протон|mail\.ru|зохо|фастмейл|тута)\b",
+                r"\b(otkroy|otkryt|zaydi)\s+(pochtu|gmail|pochta|outlook|icloud|yahoo|proton|mail\.ru|zoho|fastmail|tuta)\b",
+                r"\b(открой|открыть|зайди)\s+(почту|джимейл|gmail|аутлук|icloud|айклауд|яху|протон|mail\.ru|зохо|фастмейл|тута)\b",
                 r"\b(open)\s+(mail|gmail|outlook|icloud|yahoo|proton|zoho|fastmail|tuta)\b",
             ],
             triggers=[
@@ -290,7 +350,10 @@ def create_registry() -> CommandRegistry:
                 "открой fastmail",
                 "открой tuta",
             ],
-            examples=["открой почту", "open gmail", "открой яндекс почту", "открой yahoo mail", "открой zoho mail"],
+            examples=["open mail", "open gmail"],
+            examples_ru=["открой почту", "открой gmail"],
+            examples_en=["open mail", "open gmail"],
+            group="open_web",
             parameters_schema={"provider": "optional"},
             handler=_handle_open_mail,
         )
@@ -302,11 +365,14 @@ def create_registry() -> CommandRegistry:
             description="Open calendar",
             patterns=[
                 r"\b(otkroy|otkryt|zaydi)\s+kalendar\b",
-                r"\b(открой|открыть|зайди)\s+календарь\b",
                 r"\b(open)\s+calendar\b",
+                r"\bcalendar\b",
             ],
             triggers=["otkroy kalendar", "открой календарь", "open calendar"],
-            examples=["открой календарь", "open calendar"],
+            examples=["open calendar", "calendar"],
+            examples_ru=["открой календарь"],
+            examples_en=["open calendar", "calendar"],
+            group="open_web",
             handler=_handle_open_calendar,
         )
     )
@@ -315,9 +381,15 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="open_app",
             description="Open app",
-            patterns=[r"\b(otkroy|otkryt|zapusti|zapusk)\s+(prilozhenie\s+)?(?P<app>[\w\s\-\.]+)\b"],
+            patterns=[
+                r"\b(otkroy|otkryt|zapusti|zapusk)\s+(prilozhenie\s+)?(?P<app>[\w\s\-\.]+)\b",
+                r"\b(open|launch|start)\s+(app\s+)?(?P<app>[\w\s\-\.]+)\b",
+            ],
             triggers=["otkroy prilozhenie", "zapusti", "otkroy kalkulyator", "otkroy bloknot"],
-            examples=["zapusti kalkulyator", "otkroy bloknot"],
+            examples=["open calculator", "open notepad"],
+            examples_ru=["открой калькулятор", "открой блокнот", "запусти калькулятор", "запусти discord"],
+            examples_en=["open calculator", "open notepad", "launch discord", "start calculator"],
+            group="open_apps",
             parameters_schema={"app": "string"},
             handler=_handle_open_app,
         )
@@ -327,9 +399,15 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="note_delete",
             description="Delete a note",
-            patterns=[r"\b(udali|udalit)\s+zametk[au]\s+(?P<index>\d+)\b"],
+            patterns=[
+                r"\b(udali|udalit)\s+zametk[au]\s+(?P<index>\d+)\b",
+                r"\b(delete)\s+note\s+(?P<index>\d+)\b",
+            ],
             triggers=["udali zametku"],
-            examples=["udali zametku 2"],
+            examples=["delete note 1", "delete note 2"],
+            examples_ru=["удали заметку 1"],
+            examples_en=["delete note 1", "delete note 2"],
+            group="notes",
             parameters_schema={"index": "string"},
             handler=_handle_note_delete,
         )
@@ -340,13 +418,23 @@ def create_registry() -> CommandRegistry:
             name="note_create",
             description="Create a note",
             patterns=[
-                r"\b(sozdai|sdelai|zapishe)\s+zametk[au]\s+(?P<note>.+)\b",
                 r"\b(создай|сделай|запиши)\s+заметк[ау]\s+(?P<note>.+)\b",
-                r"\bzametk[au]\s*[:\-]\s*(?P<note>.+)\b",
                 r"\bзаметк[ау]\s*[:\-]\s*(?P<note>.+)\b",
+                r"\b(sozdai|sozday|sdelai|sdelay|zapishi|zapishe)\s+zametk[au]\s+(?P<note>.+)\b",
+                r"\bzametk[au]\s*[:\-]\s*(?P<note>.+)\b",
+                r"\b(create|make|add)\s+(a\s+)?note\s+(?P<note>.+)\b",
+                r"\bnote\s*[:\-]\s*(?P<note>.+)\b",
             ],
             triggers=["sozdai zametku", "sdelai zametku", "zametka"],
-            examples=["sozdai zametku kupit moloko"],
+            examples=["create a note: buy bread", "add note call mom"],
+            examples_ru=[
+                "создай заметку: купить хлеб",
+                "заметка: купить молоко",
+                "создай заметку позвонить маме",
+                "сделай заметку купить молоко",
+            ],
+            examples_en=["create a note: buy bread", "add note call mom", "note: buy milk", "make a note to pay bills"],
+            group="notes",
             parameters_schema={"note": "string"},
             handler=_handle_note_create,
         )
@@ -356,9 +444,15 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="note_list",
             description="List notes",
-            patterns=[r"\b(pokazhi zametki|moi zametki|spisok zametok)\b"],
+            patterns=[
+                r"\b(pokazhi zametki|moi zametki|spisok zametok)\b",
+                r"\b(list notes|show notes|my notes)\b",
+            ],
             triggers=["pokazhi zametki", "moi zametki", "spisok zametok"],
-            examples=["pokazhi zametki", "spisok zametok"],
+            examples=["list notes", "show notes"],
+            examples_ru=["покажи заметки"],
+            examples_en=["list notes", "show notes"],
+            group="notes",
             handler=_handle_note_list,
         )
     )
@@ -369,11 +463,13 @@ def create_registry() -> CommandRegistry:
             description="Update a note",
             patterns=[
                 r"\b(izmeni|izmenit|obnovi|obnovit)\s+zametk[au]\s+(?P<index>\d+)\s+na\s+(?P<note>.+)\b",
-                r"\b(izm[ei]ni|obnovi)\s+zametk[au]\s+(?P<index>\d+)\s+na\s+(?P<note>.+)\b",
-                r"\b(измен(?:и|ить)|обнов(?:и|ить))\s+заметк[ау]\s+(?P<index>\d+)\s+на\s+(?P<note>.+)\b",
+                r"\b(update|edit)\s+note\s+(?P<index>\d+)\s+(to|with)\s+(?P<note>.+)\b",
             ],
             triggers=["izmeni zametku", "obnovi zametku", "изменить заметку"],
-            examples=["izmeni zametku 2 na kupit hleb", "изменить заметку 3 на купить хлеб"],
+            examples=["update note 1 to buy milk", "edit note 2 with buy bread"],
+            examples_ru=["измени заметку 1 на купить молоко"],
+            examples_en=["update note 1 to buy milk", "edit note 2 with buy bread"],
+            group="notes",
             parameters_schema={"index": "string", "note": "string"},
             handler=_handle_note_update,
         )
@@ -385,12 +481,14 @@ def create_registry() -> CommandRegistry:
             description="Replace in note",
             patterns=[
                 r"\b(zameni)\s+v\s+zametke\s+(?P<index>\d+)\s+(?P<old>.+)\s+na\s+(?P<new>.+)\b",
-                r"\b(замени)\s+в\s+заметке\s+(?P<index>\d+)\s+(?P<old>.+)\s+на\s+(?P<new>.+)\b",
-                r"\b(zameni|замени)\s+zametk[au]\s+(?P<old>.+)\s+na\s+(?P<new>.+)\b",
-                r"\b(замени)\s+заметк[ау]\s+(?P<old>.+)\s+на\s+(?P<new>.+)\b",
+                r"\b(replace)\s+in\s+note\s+(?P<index>\d+)\s+(?P<old>.+)\s+with\s+(?P<new>.+)\b",
+                r"\b(replace)\s+note\s+(?P<index>\d+)\s+(?P<old>.+)\s+with\s+(?P<new>.+)\b",
             ],
             triggers=["zameni v zametke", "замени в заметке", "замени заметку"],
-            examples=["zameni v zametke 1 moloko na hleb", "замени заметку молоко на хлеб"],
+            examples=["replace in note 1 milk with bread", "replace note 2 coffee with tea"],
+            examples_ru=["замени в заметке 1 молоко на хлеб"],
+            examples_en=["replace in note 1 milk with bread", "replace note 2 coffee with tea"],
+            group="notes",
             parameters_schema={"index": "optional", "old": "string", "new": "string"},
             handler=_handle_note_replace,
         )
@@ -401,12 +499,27 @@ def create_registry() -> CommandRegistry:
             name="timer_set",
             description="Set a timer",
             patterns=[
-                r"\b(postav|ustanovi)\s+timer\s+na\s+(?P<duration>.+)\b",
                 r"\b(поставь|установи)\s+таймер\s+на\s+(?P<duration>.+)\b",
                 r"\bтаймер\s+на\s+(?P<duration>.+)\b",
+                r"\b(postav|ustanovi)\s+(timer|taymer)\s+na\s+(?P<duration>.+)\b",
+                r"\b(set|start)\s+(a\s+)?timer\s+(for|in)\s+(?P<duration>.+)\b",
+                r"\b(timer|taymer)\s+(for|in)\s+(?P<duration>.+)\b",
+                r"\b(timer|taymer)\s+na\s+(?P<duration>.+)\b",
             ],
-            triggers=["postav timer", "ustanovi timer", "timer na"],
-            examples=["postav timer na 5 minut"],
+            triggers=["postav timer", "ustanovi timer", "postav taymer", "ustanovi taymer", "timer na", "taymer na"],
+            examples=["set a timer for 10 seconds", "set a timer for 5 minutes"],
+            examples_ru=[
+                "поставь таймер на 10 секунд",
+                "поставь таймер на 5 минут",
+                "поставь таймер на 1 минуту",
+                "поставь таймер на 3 минуты",
+                "поставь таймер на 30 секунд",
+                "таймер на 45 секунд",
+                "таймер на 2 минуты",
+                "поставь таймер на 7 минут",
+            ],
+            examples_en=["set a timer for 10 seconds", "set a timer for 5 minutes", "timer for 30 sec", "timer in 1 min", "set timer for 2 minutes", "start a timer for 15 sec", "timer for 45 seconds", "set a timer in 3 minutes"],
+            group="timers",
             parameters_schema={"duration": "string"},
             handler=_handle_timer_set,
         )
@@ -416,9 +529,25 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="alarm_set",
             description="Set alarm",
-            patterns=[r"\b(postav|ustanovi)\s+budilnik\s+na\s+(?P<time>\d{1,2}:\d{2})\b"],
+            patterns=[
+                r"\b(postav|ustanovi)\s+budilnik\s+na\s+(?P<time>\d{1,2}:\d{2})\b",
+                r"\b(set|create)\s+(an?\s+)?alarm\s+(for|at)\s+(?P<time>\d{1,2}:\d{2})\b",
+                r"\balarm\s+(for|at)\s+(?P<time>\d{1,2}:\d{2})\b",
+            ],
             triggers=["postav budilnik", "budilnik na"],
-            examples=["postav budilnik na 07:30"],
+            examples=["set an alarm for 07:30", "alarm at 08:00"],
+            examples_ru=[
+                "поставь будильник на 07:30",
+                "поставь будильник на 08:00",
+                "поставь будильник на 06:45",
+                "поставь будильник на 21:00",
+                "поставь будильник на 06:30",
+                "поставь будильник на 07:00",
+                "поставь будильник на 09:15",
+                "поставь будильник на 08:10",
+            ],
+            examples_en=["set an alarm for 07:30", "alarm at 08:00", "set alarm for 06:45", "alarm at 21:00", "set an alarm at 09:15", "alarm at 06:30", "set an alarm for 07:00", "alarm at 22:10"],
+            group="alarms",
             parameters_schema={"time": "string"},
             handler=_handle_alarm_set,
         )
@@ -429,13 +558,27 @@ def create_registry() -> CommandRegistry:
             name="reminder_set",
             description="Create reminder",
             patterns=[
+                r"\bнапомни( мне)?\s+(?P<what>.+)\s+в\s+(?P<time>\d{1,2}[:\s]\d{2})\b",
+                r"\bнапомни( мне)?\s+(?P<what>.+)\s+через\s+(?P<duration>.+)\b",
                 r"\bnapomni( mne)?\s+(?P<what>.+)\s+v\s+(?P<time>\d{1,2}:\d{2})\b",
                 r"\bnapomni( mne)?\s+(?P<what>.+)\s+cherez\s+(?P<duration>.+)\b",
-                r"\bнапомни( мне)?\s+(?P<what>.+)\s+в\s+(?P<time>\d{1,2}:\d{2})\b",
-                r"\bнапомни( мне)?\s+(?P<what>.+)\s+через\s+(?P<duration>.+)\b",
+                r"\b(remind me)\s+to\s+(?P<what>.+)\s+at\s+(?P<time>\d{1,2}:\d{2})\b",
+                r"\b(remind me)\s+in\s+(?P<duration>.+)\b",
             ],
             triggers=["napomni", "napominanie"],
-            examples=["napomni mne kupit hleb v 18:30"],
+            examples=["remind me to buy bread at 18:30", "remind me in 5 minutes"],
+            examples_ru=[
+                "напомни мне купить хлеб в 18:30",
+                "напомни мне позвонить в 19:00",
+                "напомни мне отправить отчет в 09:00",
+                "напомни мне про встречу в 15:30",
+                "напомни мне сделать перерыв через 10 минут",
+                "напомни мне выпить воду через 30 минут",
+                "напомни мне позвонить через 1 час",
+                "напомни мне проверить почту через 2 часа",
+            ],
+            examples_en=["remind me to buy bread at 18:30", "remind me in 5 minutes", "remind me to call mom at 19:00", "remind me in 1 hour", "remind me in 30 minutes", "remind me to send report at 09:00", "remind me in 10 minutes", "remind me in 2 hours"],
+            group="reminders",
             parameters_schema={"what": "string", "time": "optional", "duration": "optional"},
             handler=_handle_reminder_set,
         )
@@ -449,11 +592,18 @@ def create_registry() -> CommandRegistry:
                 r"\b(sdelai gromche|pribav gromkost|gromche)\b",
                 r"\b(sdelai tishe|ubav gromkost|tishe)\b",
                 r"\b(vykluchi zvuk|mut|bez zvuka)\b",
+                r"\b(make it louder|turn it up|volume up)\b",
+                r"\b(make it quieter|turn it down|volume down)\b",
                 r"\bgromkost\s+na\s+(?P<level>\d{1,3})\b",
                 r"\bgromkost\s+(?P<level>\d{1,3})\b",
+                r"\b(set|change)\s+volume\s+(to\s+)?(?P<level>\d+)\b",
+                r"\bvolume\s+(?P<level>\d+)\b",
             ],
             triggers=["gromche", "tishe", "gromkost", "vykluchi zvuk"],
-            examples=["sdelai gromche", "gromkost na 30"],
+            examples=["set volume to 40", "volume 70"],
+            examples_ru=["сделай громкость 40", "сделай тише"],
+            examples_en=["set volume to 40", "volume 70", "make it louder", "make it quieter"],
+            group="system",
             parameters_schema={"level": "optional"},
             handler=_handle_volume_set,
         )
@@ -464,13 +614,36 @@ def create_registry() -> CommandRegistry:
             name="chat",
             description="Chat",
             patterns=[
-                r"\b(pogovori so mnoi|davai pogovorim)\b(?P<topic>.*)",
-                r"\bobyyasni\s+(?P<topic>.+)\b",
-                r"\bperevedi\s+(?P<topic>.+)\b",
-                r"\bpridumai\s+(?P<topic>.+)\b",
+                r"\b(pogovori so mnoy|pogovori so mnoi|davai pogovorim|davay pogovorim)\b(?P<topic>.*)",
+                r"\b(obyasni|obyyasni)\s+(?P<topic>.+)\b",
+                r"\b(perevedi)\s+(?P<topic>.+)\b",
+                r"\b(pridumai|pridumay)\s+(?P<topic>.+)\b",
+                r"\b(talk to me|let's talk)\b(?P<topic>.*)",
+                r"\b(explain|translate|write|create)\s+(?P<topic>.+)\b",
             ],
-            triggers=["pogovori so mnoi", "obyyasni", "perevedi", "pridumai"],
-            examples=["pogovori so mnoi", "obyyasni chto takoe neyroseti"],
+            triggers=["pogovori so mnoi", "pogovori so mnoy", "davai pogovorim", "davay pogovorim", "obyasni", "obyyasni", "perevedi", "pridumai", "pridumay"],
+            examples=["talk to me", "explain neural networks"],
+            examples_ru=[
+                "поговори со мной",
+                "давай поговорим",
+                "объясни что такое нейросети",
+                "объясни как работает интернет",
+                "переведи этот текст",
+                "переведи фразу",
+                "придумай историю",
+                "поговори со мной о фильмах",
+            ],
+            examples_en=[
+                "talk to me",
+                "let's talk",
+                "explain neural networks",
+                "explain how it works",
+                "translate this text",
+                "write a short story",
+                "create a poem",
+                "translate this",
+            ],
+            group="chat",
             parameters_schema={"topic": "optional"},
             handler=_handle_chat,
         )
@@ -480,9 +653,15 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="settings_tts",
             description="Toggle voice",
-            patterns=[r"\b(vklyuchi|vykluchi)\s+golos\b", r"\b(vklyuchi|vykluchi)\s+zvuk\b"],
-            triggers=["vklyuchi golos", "vykluchi golos", "vklyuchi zvuk", "vykluchi zvuk"],
-            examples=["vykluchi golos", "vklyuchi golos"],
+            patterns=[
+                r"\b(vklyuchi|vyklyuchi|vykluchi)\s+golos\b",
+                r"\b(enable|disable|turn on|turn off)\s+voice\b",
+            ],
+            triggers=["vklyuchi golos", "vyklyuchi golos", "vykluchi golos", "vklyuchi zvuk", "vyklyuchi zvuk", "vykluchi zvuk"],
+            examples=["enable voice", "disable voice"],
+            examples_ru=["включи голос", "выключи голос", "включи звук", "выключи звук"],
+            examples_en=["enable voice", "disable voice", "turn on voice", "turn off voice"],
+            group="voice",
             parameters_schema={},
             handler=_handle_toggle_tts,
         )
@@ -494,10 +673,13 @@ def create_registry() -> CommandRegistry:
             description="Set language",
             patterns=[
                 r"\b(ustanovi|postav|sdelay)\s+ya(?:zyk|zik)\s+(?P<lang>ru|en|auto)\b",
-                r"\b(установи|поставь|сделай)\s+язык\s+(?P<lang>русский|английский|авто|ru|en)\b",
+                r"\b(set)\s+language\s+(to\s+)?(?P<lang>ru|en|auto|russian|english)\b",
             ],
             triggers=["ustanovi yazyk", "установи язык"],
-            examples=["установи язык русский", "set language en"],
+            examples=["set language to english", "set language to russian"],
+            examples_ru=["установи язык русский", "установи язык английский"],
+            examples_en=["set language to english", "set language to russian", "set language auto"],
+            group="settings",
             parameters_schema={"lang": "string"},
             handler=_handle_set_language,
         )
@@ -508,11 +690,14 @@ def create_registry() -> CommandRegistry:
             name="settings_theme",
             description="Set theme",
             patterns=[
-                r"\b(ustanovi|postav|sdelay)\s+temu\s+(?P<preset>dark|midnight|neon)\b",
-                r"\b(установи|поставь|сделай)\s+тему\s+(?P<preset>темная|ночная|неон|dark|midnight|neon)\b",
+                r"\b(ustanovi|postav|sdelay)\s+temu\s+(?P<preset>temnaya|dark|midnight|neon)\b",
+                r"\b(set)\s+theme\s+(?P<preset>dark|midnight|neon)\b",
             ],
             triggers=["ustanovi temu", "установи тему"],
-            examples=["установи тему dark", "установи тему неон"],
+            examples=["set theme neon", "set theme dark"],
+            examples_ru=["установи тему неон", "поставь тему темная"],
+            examples_en=["set theme neon", "set theme dark"],
+            group="settings",
             parameters_schema={"preset": "string"},
             handler=_handle_set_theme,
         )
@@ -523,11 +708,14 @@ def create_registry() -> CommandRegistry:
             name="settings_accent",
             description="Set accent color",
             patterns=[
-                r"\b(ustanovi|postav|sdelay)\s+accent\s+(?P<color>#?[0-9a-fA-F]{6})\b",
-                r"\b(установи|поставь|сделай)\s+акцент\s+(?P<color>#?[0-9a-fA-F]{6})\b",
+                r"\b(ustanovi|postav|sdelay)\s+(accent|aktsent)\s+(?P<color>#?[0-9a-fA-F]{6})\b",
+                r"\b(set)\s+accent\s+(?P<color>#?[0-9a-fA-F]{6})\b",
             ],
-            triggers=["ustanovi accent", "установи акцент"],
-            examples=["установи акцент #7dd3fc"],
+            triggers=["ustanovi accent", "ustanovi aktsent", "установи акцент"],
+            examples=["set accent #7dd3fc", "set accent #ff6b6b"],
+            examples_ru=["установи акцент #7dd3fc"],
+            examples_en=["set accent #7dd3fc", "set accent #ff6b6b"],
+            group="settings",
             parameters_schema={"color": "string"},
             handler=_handle_set_accent,
         )
@@ -539,11 +727,13 @@ def create_registry() -> CommandRegistry:
             description="Set background intensity",
             patterns=[
                 r"\b(ustanovi|postav|sdelay)\s+fon\s+(?P<value>\d{1,3})\b",
-                r"\b(установи|поставь|сделай)\s+фон\s+(?P<value>\d{1,3})\b",
-                r"\b(intensity|background)\s+(?P<value>\d{1,3})\b",
+                r"\b(set)\s+background\s+(?P<value>\d{1,3})\b",
             ],
             triggers=["ustanovi fon", "установи фон"],
-            examples=["установи фон 70"],
+            examples=["set background 70", "set background 40"],
+            examples_ru=["установи фон 70"],
+            examples_en=["set background 70", "set background 40"],
+            group="settings",
             parameters_schema={"value": "string"},
             handler=_handle_set_bg_intensity,
         )
@@ -554,12 +744,14 @@ def create_registry() -> CommandRegistry:
             name="settings_tts_rate",
             description="Set TTS rate",
             patterns=[
-                r"\b(ustanovi|postav|sdelay)\s+skorost\s+(?P<value>\d{2,3})\b",
-                r"\b(установи|поставь|сделай)\s+скорость\s+(?P<value>\d{2,3})\b",
-                r"\b(tts|voice)\s+rate\s+(?P<value>\d{2,3})\b",
+                r"\b(ustanovi|postav)\s+skorost\s+(?P<value>\d{2,3})\b",
+                r"\b(set)\s+voice\s+rate\s+(?P<value>\d{2,3})\b",
             ],
             triggers=["ustanovi skorost", "установи скорость"],
-            examples=["установи скорость 180"],
+            examples=["set voice rate 180", "set voice rate 200"],
+            examples_ru=["установи скорость 180"],
+            examples_en=["set voice rate 180", "set voice rate 200"],
+            group="settings",
             parameters_schema={"value": "string"},
             handler=_handle_set_tts_rate,
         )
@@ -570,12 +762,14 @@ def create_registry() -> CommandRegistry:
             name="settings_tts_volume",
             description="Set TTS volume",
             patterns=[
-                r"\b(ustanovi|postav|sdelay)\s+gromkost\s+golos[a]?\s+(?P<value>\d{1,3})\b",
-                r"\b(установи|поставь|сделай)\s+громкость\s+голоса\s+(?P<value>\d{1,3})\b",
-                r"\b(tts|voice)\s+volume\s+(?P<value>\d{1,3})\b",
+                r"\b(ustanovi|postav)\s+gromkost\s+golosa\s+(?P<value>\d{1,3})\b",
+                r"\b(set)\s+voice\s+volume\s+(?P<value>\d{1,3})\b",
             ],
             triggers=["ustanovi gromkost golosa", "установи громкость голоса"],
-            examples=["установи громкость голоса 70"],
+            examples=["set voice volume 70", "set voice volume 40"],
+            examples_ru=["установи громкость голоса 70"],
+            examples_en=["set voice volume 70", "set voice volume 40"],
+            group="settings",
             parameters_schema={"value": "string"},
             handler=_handle_set_tts_volume,
         )
@@ -627,9 +821,23 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="settings_wake",
             description="Toggle wake word",
-            patterns=[r"\b(vklyuchi|vykluchi)\s+proslushku\b", r"\b(vklyuchi|vykluchi)\s+wake\s*word\b"],
-            triggers=["vklyuchi proslushku", "vykluchi proslushku", "vklyuchi wake word", "vykluchi wake word"],
-            examples=["vykluchi proslushku", "vklyuchi wake word"],
+            patterns=[
+                r"\b(vklyuchi|vyklyuchi|vykluchi)\s+proslushku\b",
+                r"\b(vklyuchi|vyklyuchi|vykluchi)\s+(wake word|hotword)\b",
+                r"\b(enable|disable|turn on|turn off)\s+(wake word|hotword)\b",
+            ],
+            triggers=[
+                "vklyuchi proslushku",
+                "vyklyuchi proslushku",
+                "vykluchi proslushku",
+                "vklyuchi wake word",
+                "vyklyuchi wake word",
+                "vykluchi wake word",
+            ],
+            examples=["enable wake word", "disable wake word"],
+            examples_ru=["включи прослушку", "выключи прослушку", "включи wake word", "выключи wake word"],
+            examples_en=["enable wake word", "disable wake word", "turn on wake word", "turn off wake word"],
+            group="voice",
             handler=_handle_toggle_wake,
         )
     )
@@ -639,21 +847,25 @@ def create_registry() -> CommandRegistry:
             name="clear_chat",
             description="Clear chat",
             patterns=[
-                r"\b(ochisti|ochistit)\s+chat\b",
-                r"\b(udalit|udali)\s+istoriyu\s+chata\b",
-                r"\b(sbros|sbrosit)\s+dialog\b",
-                r"\b(clear)\s+(chat|conversation)\b",
-                r"\b(reset)\s+(dialog|conversation)\b",
+                r"\b(очисти|очистить)\s+чат\b",
+                r"\bудали\s+историю\s+чата\b",
+                r"\b(ochisti|ochistit|sbroc|sbros)\s+chat\b",
+                r"\b(clear|reset)\s+chat\b",
             ],
             triggers=[
                 "ochisti chat",
+                "udali istoriyu chata",
                 "udalit istoriyu chata",
                 "sbros dialog",
+                "sbros chat",
                 "clear chat",
                 "clear conversation",
                 "reset dialog",
             ],
-            examples=["ochisti chat", "clear chat"],
+            examples=["clear chat", "reset chat"],
+            examples_ru=["очисти чат", "сбрось чат"],
+            examples_en=["clear chat", "reset chat"],
+            group="system",
             handler=_handle_clear_chat,
         )
     )
@@ -662,9 +874,15 @@ def create_registry() -> CommandRegistry:
         _cmd(
             name="exit",
             description="Exit",
-            patterns=[r"\b(vykhod|stop|poka|zavershi|zakroy)\b"],
-            triggers=["vykhod", "stop", "poka", "zakroy"],
-            examples=["vykhod", "poka"],
+            patterns=[
+                r"\b(vykhod|vyhod|poka|zavershit)\b",
+                r"\b(exit|quit|bye)\b",
+            ],
+            triggers=["vykhod", "vyhod", "stop", "poka", "zakroy"],
+            examples=["exit", "bye"],
+            examples_ru=["выход", "пока"],
+            examples_en=["exit", "bye"],
+            group="system",
             handler=_handle_exit,
         )
     )
@@ -672,10 +890,13 @@ def create_registry() -> CommandRegistry:
     return registry
 
 
-def _handle_help(ctx: CommandContext) -> str:
-    registry = ctx.app_context.registry
-    ids = [cmd.name for cmd in registry.all()]
-    return "\n".join(help_lines(_lang(ctx), ids))
+def _handle_help(ctx: CommandContext) -> ActionResult:
+    return ActionResult(
+        text=_t(ctx, "msg_help_opened"),
+        action="help",
+        title=_t(ctx, "action_help_title"),
+        details="",
+    )
 
 
 def _handle_greet(ctx: CommandContext) -> str:
@@ -724,7 +945,7 @@ def _handle_open_url(ctx: CommandContext) -> ActionResult | str:
 
 
 def _handle_open_mail(ctx: CommandContext) -> ActionResult:
-    text = normalize_text(ctx.text)
+    text = normalize_match_text(ctx.text)
     provider = "gmail"
     if "yandex" in text or "yandeks" in text or "яндекс" in ctx.text.lower():
         provider = "yandex"
@@ -1034,7 +1255,7 @@ def _handle_reminder_set(ctx: CommandContext) -> ActionResult | str:
 
 
 def _handle_volume_set(ctx: CommandContext) -> ActionResult | str:
-    text = normalize_text(ctx.text)
+    text = normalize_match_text(ctx.text)
     controller = ctx.app_context.volume
     if controller is None:
         return _t(ctx, "msg_volume_fail")
@@ -1097,7 +1318,7 @@ def _handle_chat(ctx: CommandContext) -> str:
 
 
 def _handle_toggle_tts(ctx: CommandContext) -> ActionResult:
-    t = normalize_text(ctx.text)
+    t = normalize_match_text(ctx.text)
     settings = load_settings()
     enable = "vklyuchi" in t
     settings.setdefault("tts", {})["enabled"] = bool(enable)
@@ -1114,7 +1335,7 @@ def _handle_toggle_tts(ctx: CommandContext) -> ActionResult:
 
 
 def _handle_toggle_wake(ctx: CommandContext) -> ActionResult:
-    t = normalize_text(ctx.text)
+    t = normalize_match_text(ctx.text)
     settings = load_settings()
     enable = "vklyuchi" in t
     settings.setdefault("ui", {})["wake_word"] = bool(enable)
@@ -1131,7 +1352,7 @@ def _handle_toggle_wake(ctx: CommandContext) -> ActionResult:
 
 
 def _handle_set_language(ctx: CommandContext) -> ActionResult | str:
-    raw = normalize_text(ctx.slots.get("lang") or "")
+    raw = normalize_match_text(ctx.slots.get("lang") or "")
     mapping = {
         "ru": "ru",
         "rus": "ru",
@@ -1162,7 +1383,7 @@ def _handle_set_language(ctx: CommandContext) -> ActionResult | str:
 
 
 def _handle_set_theme(ctx: CommandContext) -> ActionResult | str:
-    raw = normalize_text(ctx.slots.get("preset") or "")
+    raw = normalize_match_text(ctx.slots.get("preset") or "")
     mapping = {
         "dark": "dark",
         "temnaya": "dark",

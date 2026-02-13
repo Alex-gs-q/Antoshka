@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
+from pathlib import Path
 
 _PUNCT_RE = re.compile(r"[^\w\s]+", flags=re.UNICODE)
 _SPACES_RE = re.compile(r"\s+", flags=re.UNICODE)
@@ -55,6 +57,35 @@ _ALIAS = {
     "yandeks": "yandex",
 }
 
+_ABBREV_CACHE: dict[str, list[tuple[re.Pattern[str], str]]] = {}
+
+
+def _load_abbrev(lang: str) -> list[tuple[re.Pattern[str], str]]:
+    lang = (lang or "ru").lower()
+    if lang in _ABBREV_CACHE:
+        return _ABBREV_CACHE[lang]
+
+    from core.resources import resource_path
+    from core.logger import setup_logger
+
+    logger = setup_logger()
+    path = Path("config") / f"abbrev_{lang}.json"
+    if not path.exists():
+        path = resource_path(path)
+    pairs: list[tuple[re.Pattern[str], str]] = []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            for pattern, repl in data.items():
+                try:
+                    pairs.append((re.compile(pattern, flags=re.IGNORECASE | re.UNICODE), str(repl)))
+                except re.error as e:
+                    logger.warning("ABBREV_PATTERN_INVALID lang=%s pattern=%s err=%s", lang, pattern, e)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ABBREV_LOAD_FAILED lang=%s path=%s err=%s", lang, path, e)
+    _ABBREV_CACHE[lang] = pairs
+    return pairs
+
 
 def _transliterate(text: str) -> str:
     out = []
@@ -82,6 +113,15 @@ def normalize_text(text: str) -> str:
         return ""
     t = text.strip().lower()
     t = unicodedata.normalize("NFKC", t)
+    for lang in ("ru", "en"):
+        for pattern, repl in _load_abbrev(lang):
+            t = pattern.sub(repl, t)
+    t = _SPACES_RE.sub(" ", t).strip()
+    return t
+
+
+def normalize_match_text(text: str) -> str:
+    t = normalize_text(text)
     t = _PUNCT_RE.sub(" ", t)
     t = _SPACES_RE.sub(" ", t).strip()
     t = _transliterate(t)

@@ -83,6 +83,7 @@ class AlertScheduler:
                 if not current or current.dismissed:
                     return
                 current.state = "alerting"
+            self.log.info("ALERT fire id=%s type=%s due=%s", event.id, event.type, event.due_time)
             try:
                 self._on_event_fired(current)
             except Exception as e:  # noqa: BLE001
@@ -98,5 +99,5 @@ class AlertScheduler:
         if timer:
             try:
                 timer.cancel()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                self.log.exception("ALERT cancel timer failed: %s", e)

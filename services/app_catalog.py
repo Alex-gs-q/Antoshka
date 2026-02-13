@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from core.text_norm import normalize_text
+from core.text_norm import normalize_match_text
 
 
 APP_ALIASES: Dict[str, str] = {
@@ -30,9 +30,9 @@ APP_ALIASES: Dict[str, str] = {
 def resolve_app(text: str, custom: Optional[Dict[str, str]] = None) -> Optional[str]:
     if not text:
         return None
-    t = normalize_text(text)
+    t = normalize_match_text(text)
     custom = custom or {}
-    custom_norm = {normalize_text(k): v for k, v in custom.items()}
+    custom_norm = {normalize_match_text(k): v for k, v in custom.items()}
     if t in custom_norm:
         return custom_norm[t]
     if t in APP_ALIASES:

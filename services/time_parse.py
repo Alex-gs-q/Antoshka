@@ -10,12 +10,9 @@ from core.text_norm import normalize_text
 
 _DURATION_RE = re.compile(
     r"(?P<num>\d+)\s*(?P<unit>"
-    r"секунд[ауы]?|сек|"
-    r"минут[ауы]?|мин|"
-    r"час(?:а|ов)?|ч|"
-    r"sekund[ay]?|sek|"
-    r"minut[ay]?|min|"
-    r"chas|chasov|ch"
+    r"(?:секунд(?:а|ы)?|сек|с|second(?:s)?|sec(?:s)?)|"
+    r"(?:минут(?:а|ы)?|мин|м|minute(?:s)?|min(?:s)?)|"
+    r"(?:час(?:а|ов)?|ч|hour(?:s)?|hr(?:s)?|h)"
     r")",
     flags=re.IGNORECASE | re.UNICODE,
 )
@@ -34,17 +31,17 @@ def parse_duration_seconds(text: str) -> Optional[int]:
         for m in _DURATION_RE.finditer(target):
             num = int(m.group("num"))
             unit = m.group("unit")
-            if unit.startswith(("сек", "sek")):
+            if unit.startswith(("сек", "sek", "sec", "second")) or unit == "с":
                 seconds += num
-            elif unit.startswith(("мин", "min")):
+            elif unit.startswith(("мин", "min", "minute")) or unit == "м":
                 seconds += num * 60
-            elif unit.startswith(("час", "chas")) or unit == "ч" or unit == "ch":
+            elif unit.startswith(("час", "chas", "hour", "hr")) or unit in {"ч", "ch", "h"}:
                 seconds += num * 3600
         return seconds
 
     total = apply_matches(raw_norm)
     if total == 0:
-        # fallback to translit normalization for noisy STT
+        # normalize abbreviations and spacing (for both Cyrillic and English)
         t = normalize_text(raw)
         total = apply_matches(t)
 

@@ -3,13 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from core.text_norm import normalize_text
+from core.text_norm import normalize_match_text
 
 
 def resolve_known_path(text: str) -> Optional[str]:
     if not text:
         return None
-    t = normalize_text(text)
+    t = normalize_match_text(text)
     home = Path.home()
     mapping = {
         "zagruzki": home / "Downloads",

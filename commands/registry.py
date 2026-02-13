@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Pattern, Union
 
 from core.actions import ActionResult
-from core.text_norm import normalize_text
+from core.text_norm import normalize_match_text
 from core.config import load_settings
 from services.site_catalog import resolve_site
 
@@ -17,6 +17,9 @@ class Command:
     patterns: List[Pattern[str]]
     triggers: List[str]
     examples: List[str]
+    examples_ru: List[str]
+    examples_en: List[str]
+    group: str
     parameters_schema: Dict[str, str]
     handler: Callable[["CommandContext"], Union[str, ActionResult]]
 
@@ -56,24 +59,46 @@ class CommandRegistry:
                 return cmd
         return None
 
+    def examples_by_group(self, lang: str) -> Dict[str, List[str]]:
+        out: Dict[str, List[str]] = {}
+        lang = (lang or "ru").lower()
+        for cmd in self._commands:
+            if lang == "ru":
+                examples = cmd.examples_ru or []
+            else:
+                examples = cmd.examples_en or []
+            if not examples:
+                continue
+            group = cmd.group or "general"
+            out.setdefault(group, [])
+            out[group].extend(examples)
+        return out
+
+    def all_examples(self, lang: str) -> List[str]:
+        out: List[str] = []
+        for items in self.examples_by_group(lang).values():
+            out.extend(items)
+        return out
+
+    def get_all_examples(self, lang: str) -> List[str]:
+        return self.all_examples(lang)
+
     def as_tools(self) -> List[Dict[str, Any]]:
         tools: List[Dict[str, Any]] = []
         for cmd in self._commands:
             tools.append(
                 {
                     "type": "function",
-                    "function": {
-                        "name": cmd.name,
-                        "description": cmd.description,
-                        "parameters": cmd.json_schema(),
-                    },
+                    "name": cmd.name,
+                    "description": cmd.description,
+                    "parameters": cmd.json_schema(),
                 }
             )
         return tools
 
     def match(self, text: str) -> Optional[MatchResult]:
         raw = text or ""
-        norm = normalize_text(text)
+        norm = normalize_match_text(text)
         for cmd in self._commands:
             # Prefer matching raw text to preserve original slots (Cyrillic, paths, URLs).
             for pattern in cmd.patterns:
@@ -82,11 +107,33 @@ class CommandRegistry:
                     continue
                 slots = {k: v for k, v in m.groupdict().items() if v is not None}
                 if cmd.name == "open_url" and "site" in slots:
-                    site_text = normalize_text(slots.get("site", ""))
+                    site_text = normalize_match_text(slots.get("site", ""))
                     if "prilozhenie" in site_text or "app" in site_text:
                         continue
+                    if any(
+                        token in site_text
+                        for token in (
+                            "gmail",
+                            "yahoo",
+                            "proton",
+                            "outlook",
+                            "icloud",
+                            "mailru",
+                            "mail ru",
+                            "fastmail",
+                            "tuta",
+                            "zoho",
+                            "pochta",
+                        )
+                    ):
+                        # Prefer open_mail handler for mail providers.
+                        continue
                     custom_sites = (load_settings().get("custom_sites") or {})
-                    if not resolve_site(slots.get("site", ""), custom_sites):
+                    if not resolve_site(slots.get("site", ""), custom_sites) and site_text not in {
+                        "site",
+                        "website",
+                        "web",
+                    }:
                         continue
                 return MatchResult(command=cmd, slots=slots, confidence=0.92)
             # Fallback to normalized text for transliterated or noisy input.
@@ -96,11 +143,32 @@ class CommandRegistry:
                     continue
                 slots = {k: v for k, v in m.groupdict().items() if v is not None}
                 if cmd.name == "open_url" and "site" in slots:
-                    site_text = normalize_text(slots.get("site", ""))
+                    site_text = normalize_match_text(slots.get("site", ""))
                     if "prilozhenie" in site_text or "app" in site_text:
                         continue
+                    if any(
+                        token in site_text
+                        for token in (
+                            "gmail",
+                            "yahoo",
+                            "proton",
+                            "outlook",
+                            "icloud",
+                            "mailru",
+                            "mail ru",
+                            "fastmail",
+                            "tuta",
+                            "zoho",
+                            "pochta",
+                        )
+                    ):
+                        continue
                     custom_sites = (load_settings().get("custom_sites") or {})
-                    if not resolve_site(slots.get("site", ""), custom_sites):
+                    if not resolve_site(slots.get("site", ""), custom_sites) and site_text not in {
+                        "site",
+                        "website",
+                        "web",
+                    }:
                         continue
                 return MatchResult(command=cmd, slots=slots, confidence=0.92)
 

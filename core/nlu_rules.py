@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Tuple
 
 from core.language import normalize_language_mode
 from core.logger import setup_logger
-from core.text_norm import normalize_text
+from core.text_norm import normalize_match_text
 
 _WARNED_PHRASES: set[str] = set()
 
@@ -67,7 +67,7 @@ def _load_pairs(lang: str) -> List[Tuple[str, str]]:
 
     for intent, phrases in data.items():
         for p in phrases:
-            pn = normalize_text(p)
+            pn = normalize_match_text(p)
             if pn:
                 pairs.append((pn, intent))
 
@@ -88,7 +88,7 @@ def _phrase_as_words_in_text(phrase: str, text: str) -> bool:
 def detect_intent(text: str, lang: str = "ru") -> NLUResult:
     logger = setup_logger()
 
-    t = normalize_text(text)
+    t = normalize_match_text(text)
     if not t:
         return NLUResult(intent="unknown", slots={}, confidence=0.0)
 

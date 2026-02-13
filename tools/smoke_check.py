@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 import json
 import re
+import sys
+import threading
 from pathlib import Path
 from typing import List, Tuple
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.app_context import AppContext
 from core.i18n import help_lines
@@ -51,42 +58,99 @@ def _check_settings_utf8() -> List[str]:
 
 def _check_phrases_utf8() -> List[str]:
     issues: List[str] = []
-    path = Path("config/phrases_ru.json")
+    ru_path = Path("config/phrases_ru.json")
+    en_path = Path("config/phrases_en.json")
     try:
-        text = path.read_bytes().decode("utf-8")
+        text = ru_path.read_bytes().decode("utf-8")
         if re.search(r"[А-Яа-яЁё]", text) is None:
             issues.append("phrases_ru.json has no Cyrillic")
         json.loads(text)
     except Exception as e:  # noqa: BLE001
         issues.append(f"phrases_ru.json invalid UTF-8 or JSON: {e}")
+    try:
+        text = en_path.read_bytes().decode("utf-8")
+        if re.search(r"[А-Яа-яЁё]", text) is not None:
+            issues.append("phrases_en.json contains Cyrillic")
+        json.loads(text)
+    except Exception as e:  # noqa: BLE001
+        issues.append(f"phrases_en.json invalid UTF-8 or JSON: {e}")
     return issues
 
 
 def _router_cases() -> List[Tuple[str, str, str | None]]:
     return [
-        ("привет", "greet", None),
-        ("помощь", "help", None),
-        ("который час", "time", None),
-        ("какая дата", "date", None),
-        ("открой ютуб", "open_url", None),
-        ("найди в интернете фильмы", "search_web", None),
-        ("открой заметки", "open_path", None),
-        ("создай заметку купить молоко", "note_create", None),
-        ("поставь таймер на 5 минут", "timer_set", None),
-        ("напомни мне позвонить в 18:30", "reminder_set", None),
-        ("очисти чат", "clear_chat", None),
-        ("открой почту", "open_mail", None),
-        ("открой календарь", "open_calendar", None),
-        ("погода", "weather", None),
-        ("добавь событие встреча на 10.02.2026 14:00", "event_add", None),
-        ("покажи события", "event_list", None),
+        ("privet", "greet", None),
+        ("zdravstvuy", "greet", None),
+        ("dobryy den", "greet", None),
+        ("pomoshch", "help", None),
+        ("spravka", "help", None),
+        ("komandy", "help", None),
+        ("pokazhi komandy", "help", None),
+        ("skolko vremeni", "time", None),
+        ("vremya", "time", None),
+        ("kakaya data", "date", None),
+        ("kakoe segodnya chislo", "date", None),
+        ("otkroy youtube", "open_url", None),
+        ("otkroy sait vk", "open_url", None),
+        ("otkroy https://example.com", "open_url", None),
+        ("naydi v internete kotikov", "search_web", None),
+        ("poisk v internete novosti", "search_web", None),
+        ("otkroy kartu", "open_map", None),
+        ("pokazhi marshrut do doma", "open_map", None),
+        (r"otkroy fail C:\Temp\note.txt", "open_path", None),
+        ("otkroy papku zagruzki", "open_path", None),
+        ("otkroy prilozhenie notepad", "open_app", None),
+        ("sdelai zametku kupit moloko", "note_create", None),
+        ("zametka: kupit hleb", "note_create", None),
+        ("pokazhi zametki", "note_list", None),
+        ("udali zametku 2", "note_delete", None),
+        ("izmeni zametku 2 na kupit hleb", "note_update", None),
+        ("zameni v zametke 2 moloko na hleb", "note_replace", None),
+        ("postav timer na 5 minut", "timer_set", None),
+        ("ustanovi timer na 10 minut", "timer_set", None),
+        ("postav budilnik na 07:30", "alarm_set", None),
+        ("napomni mne kupit hleb v 18:30", "reminder_set", None),
+        ("napomni kupit hleb cherez 10 minut", "reminder_set", None),
+        ("sdelai gromche", "volume_set", None),
+        ("sdelai tishe", "volume_set", None),
+        ("gromkost na 40", "volume_set", None),
+        ("mut", "volume_set", None),
+        ("proverka zvuka", "tts_test", None),
+        ("skazhi test", "tts_test", None),
+        ("ustanovi yazyk ru", "settings_language", None),
+        ("ustanovi yazyk en", "settings_language", None),
+        ("ustanovi temu dark", "settings_theme", None),
+        ("ustanovi temu neon", "settings_theme", None),
+        ("ustanovi accent #7dd3fc", "settings_accent", None),
+        ("ustanovi fon 70", "settings_bg_intensity", None),
+        ("ustanovi skorost 180", "settings_tts_rate", None),
+        ("ustanovi gromkost golosa 70", "settings_tts_volume", None),
+        ("vklyuchi proslushku", "settings_wake", None),
+        ("vykluchi proslushku", "settings_wake", None),
+        ("otkroy pochtu", "open_mail", None),
+        ("open mail", "open_mail", "en"),
+        ("open gmail", "open_mail", "en"),
+        ("otkroy kalendar", "open_calendar", None),
+        ("open calendar", "open_calendar", "en"),
+        ("pogoda v moskve", "weather", None),
+        ("pogoda", "weather", None),
+        ("sozdai sobytie vstrecha na 10.02.2026 15:30", "event_add", None),
+        ("dobav sobytie zvonok na 10.02.2026 14:00", "event_add", None),
+        ("pokazhi sobytiya", "event_list", None),
+        ("spisok sobytiy", "event_list", None),
+        ("ochisti chat", "clear_chat", None),
+        ("udali istoriyu chata", "clear_chat", None),
+        ("vyhod", "exit", None),
+        ("exit", "exit", "en"),
         ("hello", "greet", "en"),
-        ("help", "help", "en"),
         ("what time is it", "time", "en"),
         ("what date is it", "date", "en"),
         ("open youtube", "open_url", "en"),
-        ("open mail", "open_mail", "en"),
-        ("open calendar", "open_calendar", "en"),
+        ("open site", "open_url", "en"),
+        ("open folder", "open_path", "en"),
+        ("open file", "open_path", "en"),
+        ("help", "help", "en"),
+        ("commands", "help", "en"),
         ("bye", "exit", "en"),
     ]
 
@@ -104,6 +168,20 @@ def _check_router() -> List[str]:
     return issues
 
 
+def _check_scheduler() -> List[str]:
+    issues: List[str] = []
+    fired = threading.Event()
+
+    def _on_event(_event) -> None:
+        fired.set()
+
+    scheduler = Scheduler(notify=_on_event)
+    scheduler.schedule_in(0, "test", meta={"type": "timer", "duration_sec": 1})
+    if not fired.wait(1.0):
+        issues.append("Scheduler did not fire within timeout")
+    return issues
+
+
 def run_self_test() -> int:
     logger = setup_logger()
     issues: List[str] = []
@@ -112,8 +190,15 @@ def run_self_test() -> int:
     issues.extend(_check_settings_utf8())
     issues.extend(_check_phrases_utf8())
     issues.extend(_check_router())
+    issues.extend(_check_scheduler())
     # audio alerts init + file check
     try:
+        try:
+            from PySide6.QtCore import QCoreApplication
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"PySide6 unavailable: {e}") from e
+        if QCoreApplication.instance() is None:
+            _ = QCoreApplication([])
         _ = AudioAlerts()
     except Exception as e:  # noqa: BLE001
         issues.append(f"AudioAlerts init failed: {e}")
