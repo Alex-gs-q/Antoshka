@@ -136,7 +136,7 @@ Onefile:
 
 Artifacts:
 
-- `dist/AntoshkaApp.exe`
+- `dist/AntoshkaApp/AntoshkaApp.exe`
 - `dist/AntoshkaApp_Windows.zip`
 - `dist/Antoshka_onefile.exe`
 - `dist/Antoshka_onefile_debug.exe`
@@ -164,3 +164,17 @@ If onefile does not start:
 3. Temporarily disable SmartScreen/Defender blocking for this exe.
 4. Run debug build and send console output:
    `.\dist\Antoshka_onefile_debug.exe --self-test`
+
+## Ready Package For Friend
+
+Recommended for transfer/use (no Python required):
+
+- `release/AntoshkaApp_friend_ready.zip` (portable folder build)
+- `release/AntoshkaApp_installer_ready.zip` (no-admin installer package)
+
+Installer package usage:
+
+1. Unzip `release/AntoshkaApp_installer_ready.zip`
+2. Run `install.bat`
+3. Launch app from desktop shortcut `Antoshka`
+4. Uninstall with `uninstall.bat`
