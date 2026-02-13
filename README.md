@@ -14,6 +14,23 @@ Voice assistant with CLI and desktop UI.
 - Onefile build may fail on some Windows setups before Python starts (bootloader temp extraction issue)
 - If onefile fails, use folder build or installer package from `release/`
 
+## Compatibility
+
+| Item | Status |
+| --- | --- |
+| OS | Windows 10/11 (x64) |
+| Python required for end users | No (use release package) |
+| Internet required | Optional (required only for online features like LLM/weather) |
+| Microphone required | Optional (text mode works without mic) |
+
+## Quick Start (Defense)
+
+```powershell
+.\dist\AntoshkaApp\AntoshkaApp.exe --self-test
+.\dist\AntoshkaApp\AntoshkaApp.exe --smoke
+.\dist\AntoshkaApp\AntoshkaApp.exe
+```
+
 ## For Defense / Demo
 
 Recommended package:
@@ -26,6 +43,8 @@ Quick demo checks:
 2. Run `--self-test` (headless)
 3. Run `--smoke` (headless)
 4. Show RU/EN switch + timer + help
+
+![Antoshka UI](img/ui_mockup.png)
 
 ## Run
 
@@ -45,6 +64,11 @@ python antoshka_ui.py
 
 - User guide: `docs/USER_GUIDE.md`
 - Developer guide: `docs/DEVELOPER_GUIDE.md`
+- Changelog: `CHANGELOG.md`
+- License: `LICENSE`
+- Security policy: `SECURITY.md`
+- Support and troubleshooting: `SUPPORT.md`
+- Release notes template: `release/release_notes_template.md`
 
 ## First Run (Windows)
 
@@ -190,6 +214,12 @@ If onefile does not start:
 4. Run debug build and send console output:
    `.\dist\Antoshka_onefile_debug.exe --self-test`
 
+## Known Issues
+
+- Onefile package can fail before Python starts with `Failed to create parent directory structure`.
+- If onefile fails, use folder build or installer package.
+- On some systems Windows Defender/SmartScreen may block first launch until manually allowed.
+
 ## Ready Package For Friend
 
 Recommended for transfer/use (no Python required):
@@ -203,3 +233,10 @@ Installer package usage:
 2. Run `install.bat`
 3. Launch app from desktop shortcut `Antoshka`
 4. Uninstall with `uninstall.bat`
+
+## Privacy and Data
+
+- Local app data path: `%LOCALAPPDATA%\Antoshka\`
+- Logs path: `%LOCALAPPDATA%\Antoshka\logs\` (or `logs/` near app for some runs)
+- History path: `%LOCALAPPDATA%\Antoshka\data\history.json`
+- API keys are read from environment (`OPENAI_API_KEY`) and must not be hardcoded into the app
