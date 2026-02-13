@@ -42,6 +42,7 @@ MANIFEST
 *.spec
 !Antoshka_pyinstaller.spec
 !Antoshka_onefile.spec
+!Antoshka_onefile_debug.spec
 
 # =========================
 # Logs / runtime data
@@ -88,3 +89,7 @@ Desktop.ini
 models/vosk/
 models/vosk_en/
 Vosk/
+
+# Local diagnostics
+.tmp_onefile/
+.tmp_logs/

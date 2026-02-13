@@ -4,6 +4,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import sys
 import tempfile
+from typing import Optional
 
 from core.paths import logs_dir
 
@@ -25,10 +26,14 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
 
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
 
-    logs_dir = _get_logs_dir()
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    log_file = logs_dir / "antoshka.log"
-    app_log_file = logs_dir / "app.log"
+    log_dir_path = _get_logs_dir()
+    try:
+        log_dir_path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        log_dir_path = Path(tempfile.gettempdir()) / "Antoshka" / "logs"
+        log_dir_path.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir_path / "antoshka.log"
+    app_log_file = log_dir_path / "app.log"
 
     fmt = logging.Formatter(
         fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -40,25 +45,13 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
     console.addFilter(_MaskSecretsFilter())
     logger.addHandler(console)
 
-    file_handler = RotatingFileHandler(
-        filename=str(log_file),
-        maxBytes=1_000_000,
-        backupCount=3,
-        encoding="utf-8",
-    )
-    file_handler.setFormatter(fmt)
-    file_handler.addFilter(_MaskSecretsFilter())
-    logger.addHandler(file_handler)
+    file_handler = _make_rotating_handler(log_file, fmt)
+    if file_handler is not None:
+        logger.addHandler(file_handler)
 
-    app_file_handler = RotatingFileHandler(
-        filename=str(app_log_file),
-        maxBytes=1_000_000,
-        backupCount=3,
-        encoding="utf-8",
-    )
-    app_file_handler.setFormatter(fmt)
-    app_file_handler.addFilter(_MaskSecretsFilter())
-    logger.addHandler(app_file_handler)
+    app_file_handler = _make_rotating_handler(app_log_file, fmt)
+    if app_file_handler is not None:
+        logger.addHandler(app_file_handler)
 
     logger.propagate = False
     logger.info("Logger initialized")
@@ -66,9 +59,12 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
 
 
 def _ensure_app_log_handler(logger: logging.Logger) -> None:
-    logs_dir = _get_logs_dir()
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    app_log_file = str(logs_dir / "app.log")
+    log_dir_path = _get_logs_dir()
+    try:
+        log_dir_path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+    app_log_file = str(log_dir_path / "app.log")
     for handler in logger.handlers:
         if isinstance(handler, RotatingFileHandler):
             if str(handler.baseFilename) == app_log_file:
@@ -77,15 +73,9 @@ def _ensure_app_log_handler(logger: logging.Logger) -> None:
         fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    app_file_handler = RotatingFileHandler(
-        filename=app_log_file,
-        maxBytes=1_000_000,
-        backupCount=3,
-        encoding="utf-8",
-    )
-    app_file_handler.setFormatter(fmt)
-    app_file_handler.addFilter(_MaskSecretsFilter())
-    logger.addHandler(app_file_handler)
+    handler = _make_rotating_handler(Path(app_log_file), fmt)
+    if handler is not None:
+        logger.addHandler(handler)
 
 
 def _get_logs_dir() -> Path:
@@ -108,3 +98,18 @@ class _MaskSecretsFilter(logging.Filter):
         record.msg = msg
         record.args = ()
         return True
+
+
+def _make_rotating_handler(path: Path, fmt: logging.Formatter) -> Optional[RotatingFileHandler]:
+    try:
+        handler = RotatingFileHandler(
+            filename=str(path),
+            maxBytes=1_000_000,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setFormatter(fmt)
+        handler.addFilter(_MaskSecretsFilter())
+        return handler
+    except Exception:
+        return None

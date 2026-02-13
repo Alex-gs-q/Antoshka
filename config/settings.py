@@ -90,9 +90,10 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
 def load_settings(path: str | None = None) -> Dict[str, Any]:
     logger = setup_logger(level=DEFAULT_SETTINGS["app"]["log_level"])
     p = Path(path) if path else (config_dir() / "settings.json")
+    bundled_rel = Path(path) if path else Path("config/settings.json")
 
     if not p.exists():
-        bundled = resource_path(path)
+        bundled = resource_path(bundled_rel)
         if bundled.exists():
             p = bundled
         else:

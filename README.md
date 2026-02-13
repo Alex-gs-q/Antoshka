@@ -114,6 +114,12 @@ One-file:
 python -m PyInstaller Antoshka_onefile.spec
 ```
 
+One-file debug (console):
+
+```bash
+python -m PyInstaller Antoshka_onefile_debug.spec
+```
+
 ## Release Build (Windows)
 
 Recommended:
@@ -131,12 +137,30 @@ Onefile:
 Artifacts:
 
 - `dist/AntoshkaApp.exe`
-- `dist/AntoshkaApp_Windows.zip` (or `_onefile.zip`)
+- `dist/AntoshkaApp_Windows.zip`
+- `dist/Antoshka_onefile.exe`
+- `dist/Antoshka_onefile_debug.exe`
 
 Self-test:
 
 ```powershell
-.\dist\AntoshkaApp.exe --self-test
+.\dist\AntoshkaApp\AntoshkaApp.exe --self-test
+.\dist\Antoshka_onefile.exe --self-test
 ```
 
-Self-test logs: `logs/app.log`
+Smoke:
+
+```powershell
+.\dist\AntoshkaApp\AntoshkaApp.exe --smoke
+.\dist\Antoshka_onefile.exe --smoke
+```
+
+Self-test report: `logs/pre_release_report.txt` (or рядом с exe)
+
+If onefile does not start:
+
+1. Move exe to `C:\Antoshka\` (latin-only path).
+2. Check write access to `%TEMP%` and `%LOCALAPPDATA%\Temp`.
+3. Temporarily disable SmartScreen/Defender blocking for this exe.
+4. Run debug build and send console output:
+   `.\dist\Antoshka_onefile_debug.exe --self-test`

@@ -1,28 +1,43 @@
+﻿import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from core.logger import setup_logger
-from core.windows_appid import set_app_user_model_id
-from ui.qt_app import run
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--self-test", action="store_true", dest="self_test")
+    parser.add_argument("--smoke", action="store_true")
+    args, _unknown = parser.parse_known_args(argv)
+    return args
+
+
+def _detect_activation_arg(values: list[str]) -> str | None:
+    for arg in values:
+        if "action=" in arg and "id=" in arg:
+            return arg
+    return None
 
 
 def main() -> None:
-    set_app_user_model_id("Antoshka.Assistant")
-    activation_args = None
-    for arg in sys.argv[1:]:
-        if "action=" in arg and "id=" in arg:
-            activation_args = arg
-            break
-    if "--self-test" in sys.argv:
-        logger = setup_logger()
-        try:
-            from tools.smoke_check import run_self_test
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Self-test import failed: %s", e)
-            raise SystemExit(1)
+    args = _parse_args()
+
+    if args.self_test:
+        from core.selftest import run_self_test
+
         raise SystemExit(run_self_test())
+
+    if args.smoke:
+        from core.selftest import run_smoke
+
+        raise SystemExit(run_smoke())
+
+    from core.windows_appid import set_app_user_model_id
+    from ui.qt_app import run
+
+    set_app_user_model_id("Antoshka.Assistant")
+    activation_args = _detect_activation_arg(sys.argv[1:])
     run(activation_args)
 
 

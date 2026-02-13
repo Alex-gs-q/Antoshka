@@ -1,18 +1,5 @@
-﻿import sys
-
-from core.config import load_settings
-from core.app_context import AppContext
-from core.dialogue import Dialogue, DialogueConfig
-from core.i18n import t as tr, check_i18n_integrity
-from core.language import resolve_language
-from core.logger import setup_logger
-from core.paths import data_dir
-from core.stt import create_stt
-from core.tts import TTS, TTSConfig
-from core.windows_appid import set_app_user_model_id
-from llm.client import LLMClient, LLMConfig
-from services.scheduler import Scheduler
-from services.volume import VolumeController
+﻿import argparse
+import sys
 
 
 def _configure_stdio_utf8() -> None:
@@ -21,30 +8,56 @@ def _configure_stdio_utf8() -> None:
             sys.stdout.reconfigure(encoding="utf-8")
         if hasattr(sys.stderr, "reconfigure"):
             sys.stderr.reconfigure(encoding="utf-8")
-    except Exception as e:  # noqa: BLE001
-        setup_logger().exception("STDIO reconfigure failed: %s", e)
+    except Exception:
+        pass
 
 
-def main():
-    set_app_user_model_id("Antoshka.Assistant")
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--self-test", action="store_true", dest="self_test")
+    parser.add_argument("--smoke", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main() -> None:
     _configure_stdio_utf8()
+    args = _parse_args()
+
+    if args.self_test:
+        from core.selftest import run_self_test
+
+        raise SystemExit(run_self_test())
+
+    if args.smoke:
+        from core.selftest import run_smoke
+
+        raise SystemExit(run_smoke())
+
+    from core.app_context import AppContext
+    from core.config import load_settings
+    from core.dialogue import Dialogue, DialogueConfig
+    from core.i18n import check_i18n_integrity
+    from core.i18n import t as tr
+    from core.language import resolve_language
+    from core.logger import setup_logger
+    from core.paths import data_dir
+    from core.stt import create_stt
+    from core.tts import TTS, TTSConfig
+    from core.windows_appid import set_app_user_model_id
+    from llm.client import LLMClient, LLMConfig
+    from services.scheduler import Scheduler
+    from services.volume import VolumeController
+
+    set_app_user_model_id("Antoshka.Assistant")
     logger = setup_logger()
     check_i18n_integrity()
-    if "--self-test" in sys.argv:
-        try:
-            from tools.smoke_check import run_self_test
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Self-test import failed: %s", e)
-            raise SystemExit(1)
-        raise SystemExit(run_self_test())
+
     settings = load_settings()
     lang_mode = (settings.get("app", {}) or {}).get("language", "auto")
     current_lang = resolve_language(lang_mode, None, fallback="ru")
 
-    # safety
     dangerous_mode = bool(settings.get("safety", {}).get("dangerous_mode", False))
 
-    # TTS
     tts_raw = settings.get("tts", {}) or {}
     tts = TTS(
         TTSConfig(
@@ -59,7 +72,6 @@ def main():
     logger.info("STT mode: %s", (settings.get("stt", {}) or {}).get("mode", "text"))
     logger.info("Dangerous mode: %s", dangerous_mode)
 
-    # LLM
     llm_client = None
     llm_raw = settings.get("llm", {}) or {}
     try:
@@ -109,7 +121,6 @@ def main():
         )
     )
 
-    # STT
     stt = create_stt(settings)
 
     hello = tr("msg_console_hello", current_lang)
