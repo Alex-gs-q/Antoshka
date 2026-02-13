@@ -4,7 +4,7 @@ Set-Location $here
 
 try { Stop-Process -Name AntoshkaApp -Force -ErrorAction SilentlyContinue } catch {}
 
-.\.venv\Scripts\python.exe -m PyInstaller Antoshka_pyinstaller.spec --onefile
+.\.venv\Scripts\python.exe -m PyInstaller Antoshka_onefile.spec
 
 if (Test-Path .\dist\AntoshkaApp.exe) {
   Compress-Archive -Force -Path .\dist\AntoshkaApp.exe -DestinationPath .\dist\AntoshkaApp_Windows_onefile.zip

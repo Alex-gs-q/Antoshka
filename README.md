@@ -60,9 +60,33 @@ If the key is missing or looks like a placeholder, UI shows a clear diagnostic m
 ## Notifications (Windows)
 
 - System notifications are shown for timers/alarms/reminders when enabled in Settings.
+- Optional tray duplication (fallback) can be enabled for reliability.
+- In-app alert handling includes a dedicated Alert Popup with controls.
 - If notifications are blocked, enable them in Windows Settings:
   `Settings > System > Notifications > Antoshka`.
 - Clicking a notification restores the app window.
+
+## Presentation Brief
+
+- `docs/PRESENTATION_BRIEF.md` — краткое описание продукта, FAQ и демо‑сценарии для защиты.
+
+## Alerts UI (Timers/Alarms/Reminders)
+
+When an alert fires, the UI shows:
+
+- Alert card in chat with action buttons.
+- Optional **Alert Popup** (always on top) with Snooze/Stop/Repeat.
+
+Settings (UI):
+
+- `Alerts > Alert popup window` (enable/disable)
+- `Alerts > Auto-close (sec)` (0 = disable)
+- `Alerts > Duplicate via tray (fallback)` (recommended ON)
+
+Notes:
+
+- The Alert Popup appears centered and can be dragged with the mouse.
+- Buttons are always visible, even on small windows.
 
 ## Tests
 
@@ -70,11 +94,24 @@ If the key is missing or looks like a placeholder, UI shows a clear diagnostic m
 pytest
 ```
 
+Smoke-test (CLI, no GUI):
+
+```bash
+python tools/smoke_test.py
+```
+
 ## Build (Windows)
 
 ```bash
-pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 python -m PyInstaller Antoshka_pyinstaller.spec
+```
+
+One-file:
+
+```bash
+python -m PyInstaller Antoshka_onefile.spec
 ```
 
 ## Release Build (Windows)

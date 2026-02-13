@@ -40,6 +40,8 @@ MANIFEST
 # =========================
 *.manifest
 *.spec
+!Antoshka_pyinstaller.spec
+!Antoshka_onefile.spec
 
 # =========================
 # Logs / runtime data
@@ -49,6 +51,7 @@ logs/*
 !logs/.keep
 data/*
 !data/.keep
+!build/version_info.txt
 
 # =========================
 # Tests / coverage
@@ -83,4 +86,5 @@ Desktop.ini
 # =========================
 # Vosk models are huge — keep local, download separately
 models/vosk/
+models/vosk_en/
 Vosk/

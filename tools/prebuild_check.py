@@ -17,17 +17,26 @@ def _run(cmd: list[str]) -> tuple[int, str]:
 
 def _check_conflicts() -> List[str]:
     issues: List[str] = []
-    conflict_markers = ("<<<<<<<", ">>>>>>>", "=======")
+    skip_dirs = {
+        ".git",
+        ".venv",
+        "venv",
+        "build",
+        "dist",
+        ".ruff_cache",
+        ".pytest_cache",
+    }
+    conflict_re = re.compile(r"^(<{7}|={7}|>{7})")
     for path in PROJECT_ROOT.rglob("*"):
         if path.is_dir():
             continue
-        if ".git" in path.parts:
+        if any(part in skip_dirs for part in path.parts):
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except Exception:
             continue
-        if any(m in text for m in conflict_markers):
+        if any(conflict_re.match(line) for line in text.splitlines()):
             issues.append(f"Conflict markers in {path}")
     return issues
 
@@ -41,8 +50,8 @@ def _check_env_gitignore() -> List[str]:
     if ".env" not in gi:
         issues.append(".env is not in .gitignore")
     # ensure .env not tracked
-    code, _ = _run(["git", "ls-files", ".env"])
-    if code == 0:
+    code, out = _run(["git", "ls-files", ".env"])
+    if code == 0 and out.strip():
         issues.append(".env is tracked by git; remove from repo")
     return issues
 
@@ -67,8 +76,8 @@ def _check_phrases() -> List[str]:
         text = ru.read_text(encoding="utf-8")
         if re.search(r"[А-Яа-яЁё]", text) is None:
             issues.append("phrases_ru.json has no Cyrillic")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        issues.append(f"phrases_ru.json read failed: {e}")
     return issues
 
 
@@ -84,23 +93,22 @@ def _check_icons() -> List[str]:
     return issues
 
 
-def _check_spec_datas() -> List[str]:
+def _check_spec_datas(spec_name: str) -> List[str]:
     issues: List[str] = []
-    spec = PROJECT_ROOT / "Antoshka_pyinstaller.spec"
+    spec = PROJECT_ROOT / spec_name
     if not spec.exists():
-        return ["Antoshka_pyinstaller.spec not found"]
+        return [f"{spec_name} not found"]
     text = spec.read_text(encoding="utf-8")
     required = [
         "config",
         "data",
-        "assets/icons",
+        "assets",
         "Music",
-        "services/audio",
-        "services/tts",
+        "models",
     ]
     for item in required:
         if item not in text:
-            issues.append(f"Spec missing datas for: {item}")
+            issues.append(f"{spec_name} missing datas for: {item}")
     return issues
 
 
@@ -124,7 +132,8 @@ def main() -> int:
     issues.extend(_check_phrases())
     issues.extend(_check_settings())
     issues.extend(_check_icons())
-    issues.extend(_check_spec_datas())
+    issues.extend(_check_spec_datas("Antoshka_pyinstaller.spec"))
+    issues.extend(_check_spec_datas("Antoshka_onefile.spec"))
 
     if issues:
         print("PREBUILD: FAIL")
