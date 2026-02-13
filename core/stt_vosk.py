@@ -13,6 +13,7 @@ import sounddevice as sd
 from vosk import KaldiRecognizer, Model
 
 from core.logger import setup_logger
+from core.resources import resource_path
 
 
 @dataclass
@@ -34,6 +35,8 @@ class VoskSTT:
         self._stop_event = threading.Event()
 
         mp = Path(config.model_path)
+        if not mp.is_absolute():
+            mp = resource_path(mp)
         if not mp.exists():
             raise FileNotFoundError(
                 f"Vosk model not found at {mp}. Run: .\\.venv\\Scripts\\python.exe tools\\download_vosk_model.py"

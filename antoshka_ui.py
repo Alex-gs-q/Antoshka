@@ -1,4 +1,7 @@
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from core.logger import setup_logger
 from core.windows_appid import set_app_user_model_id

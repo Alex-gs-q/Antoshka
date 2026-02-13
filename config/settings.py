@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core.logger import setup_logger
+from core.paths import config_dir
 from core.resources import resource_path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "app": {"name": "Антошка", "language": "auto", "log_level": "INFO", "debug": False},
@@ -44,6 +48,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "continuous_dialogue": True,
         "hands_free": False,
         "ai_mode": False,
+        "ai_mode_autostart": True,
         "voice_filter_lang": "All",
         "voice_filter_gender": "All",
         "theme_preset": "dark",
@@ -53,6 +58,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "voice_response_timeout_sec": 12,
         "alerts_enabled": True,
         "alerts_sound": "Music/Kioko - The Phantom Traveler.mp3",
+        "alerts_sound_name": "default",
+        "alerts_sound_path": "",
+        "alerts_custom_sounds": [],
         "alerts_volume": 80,
         "alerts_loop": True,
         "snooze_default_minutes": 5,
@@ -79,9 +87,9 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
     return result
 
 
-def load_settings(path: str = "config/settings.json") -> Dict[str, Any]:
+def load_settings(path: str | None = None) -> Dict[str, Any]:
     logger = setup_logger(level=DEFAULT_SETTINGS["app"]["log_level"])
-    p = Path(path)
+    p = Path(path) if path else (config_dir() / "settings.json")
 
     if not p.exists():
         bundled = resource_path(path)
@@ -108,9 +116,9 @@ def load_settings(path: str = "config/settings.json") -> Dict[str, Any]:
         return dict(DEFAULT_SETTINGS)
 
 
-def save_settings(settings: Dict[str, Any], path: str = "config/settings.json") -> None:
+def save_settings(settings: Dict[str, Any], path: str | None = None) -> None:
     logger = setup_logger(level=DEFAULT_SETTINGS["app"]["log_level"])
-    p = Path(path)
+    p = Path(path) if path else (config_dir() / "settings.json")
     try:
         ui = settings.get("ui")
         if isinstance(ui, dict) and "voice_response_timeout" in ui:

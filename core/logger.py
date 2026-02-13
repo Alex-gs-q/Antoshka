@@ -1,9 +1,11 @@
 import logging
+import re
 from logging.handlers import RotatingFileHandler
-import os
 from pathlib import Path
 import sys
 import tempfile
+
+from core.paths import logs_dir
 
 
 def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
@@ -35,6 +37,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
 
     console = logging.StreamHandler()
     console.setFormatter(fmt)
+    console.addFilter(_MaskSecretsFilter())
     logger.addHandler(console)
 
     file_handler = RotatingFileHandler(
@@ -44,6 +47,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
         encoding="utf-8",
     )
     file_handler.setFormatter(fmt)
+    file_handler.addFilter(_MaskSecretsFilter())
     logger.addHandler(file_handler)
 
     app_file_handler = RotatingFileHandler(
@@ -53,6 +57,7 @@ def setup_logger(name: str = "antoshka", level: str = "INFO") -> logging.Logger:
         encoding="utf-8",
     )
     app_file_handler.setFormatter(fmt)
+    app_file_handler.addFilter(_MaskSecretsFilter())
     logger.addHandler(app_file_handler)
 
     logger.propagate = False
@@ -79,14 +84,27 @@ def _ensure_app_log_handler(logger: logging.Logger) -> None:
         encoding="utf-8",
     )
     app_file_handler.setFormatter(fmt)
+    app_file_handler.addFilter(_MaskSecretsFilter())
     logger.addHandler(app_file_handler)
 
 
 def _get_logs_dir() -> Path:
     if getattr(sys, "frozen", False):
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "Antoshka" / "logs"
+        return logs_dir()
     try:
         return Path("logs").resolve()
     except Exception:
         return Path(tempfile.gettempdir()) / "Antoshka" / "logs"
+
+
+class _MaskSecretsFilter(logging.Filter):
+    _re_key = re.compile(r"(sk-[A-Za-z0-9]{8,})")
+    _re_env = re.compile(r"(OPENAI_API_KEY=)([^\s]+)")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = str(record.getMessage())
+        msg = self._re_key.sub("sk-****", msg)
+        msg = self._re_env.sub(r"\1****", msg)
+        record.msg = msg
+        record.args = ()
+        return True

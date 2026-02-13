@@ -165,8 +165,8 @@ class TTS:
                 if tmp and os.path.exists(tmp):
                     try:
                         os.unlink(tmp)
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001
+                        self.logger.exception("TTS temp cleanup failed: %s", e)
 
     def get_volume(self) -> float | None:
         if not self.engine or self.provider == "edge":

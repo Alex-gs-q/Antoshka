@@ -11,6 +11,7 @@ import numpy as np
 import sounddevice as sd
 
 from core.logger import setup_logger
+from core.resources import resource_path
 
 
 @dataclass
@@ -40,6 +41,8 @@ class WakeWordListener:
         self._KaldiRecognizer = KaldiRecognizer
 
         mp = Path(config.model_path)
+        if not mp.is_absolute():
+            mp = resource_path(mp)
         if not mp.exists():
             raise FileNotFoundError(f"Vosk model not found at {mp}")
         self._model = Model(str(mp))

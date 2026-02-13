@@ -1,13 +1,12 @@
 ﻿import sys
 
 from core.config import load_settings
-from pathlib import Path
-
 from core.app_context import AppContext
 from core.dialogue import Dialogue, DialogueConfig
-from core.i18n import t as tr
+from core.i18n import t as tr, check_i18n_integrity
 from core.language import resolve_language
 from core.logger import setup_logger
+from core.paths import data_dir
 from core.stt import create_stt
 from core.tts import TTS, TTSConfig
 from core.windows_appid import set_app_user_model_id
@@ -22,14 +21,15 @@ def _configure_stdio_utf8() -> None:
             sys.stdout.reconfigure(encoding="utf-8")
         if hasattr(sys.stderr, "reconfigure"):
             sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        setup_logger().exception("STDIO reconfigure failed: %s", e)
 
 
 def main():
     set_app_user_model_id("Antoshka.Assistant")
     _configure_stdio_utf8()
     logger = setup_logger()
+    check_i18n_integrity()
     if "--self-test" in sys.argv:
         try:
             from tools.smoke_check import run_self_test
@@ -72,6 +72,9 @@ def main():
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("LLM disabled: %s", e)
+        if "OPENAI_API_KEY is missing" in str(e):
+            msg = tr("msg_ai_missing_key", current_lang)
+            print(f"{tr('app_name', current_lang)}: {msg}")
 
     def notify(message: str) -> None:
         prefix = tr("app_name", current_lang)
@@ -90,7 +93,7 @@ def main():
 
     app_context = AppContext(
         notify=notify,
-        data_dir=Path("data"),
+        data_dir=data_dir(),
         scheduler=scheduler,
         volume=volume,
         llm_client=llm_client,
