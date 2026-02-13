@@ -1,0 +1,14 @@
+{
+  "(?<=\\d)\\s*sec(s)?\\b": " seconds",
+  "(?<=\\d)\\s*s\\b": " seconds",
+  "(?<=\\d)\\s*min(s)?\\b": " minutes",
+  "(?<=\\d)\\s*m\\b": " minutes",
+  "(?<=\\d)\\s*hr(s)?\\b": " hours",
+  "(?<=\\d)\\s*h\\b": " hours",
+  "\\bsec(s)?\\b": "seconds",
+  "\\bs\\b": "seconds",
+  "\\bmin(s)?\\b": "minutes",
+  "\\bm\\b": "minutes",
+  "\\bhr(s)?\\b": "hours",
+  "\\bh\\b": "hours"
+}

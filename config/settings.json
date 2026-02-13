@@ -1,118 +1,92 @@
 {
-  "version": "2.0",
-  "model": {
-    "path": "models/vosk-model-small-ru",
-    "sample_rate": 16000,
-    "language": "ru"
+  "app": {
+    "name": "Антошка",
+    "language": "ru",
+    "log_level": "INFO",
+    "debug": false
   },
-  "audio": {
-    "device_index": null,
-    "channels": 1,
-    "chunk_size": 1024,
-    "silence_threshold": 500,
-    "silence_duration": 1.0,
-    "phrase_timeout": 5.0,
-    "vad": {
-      "enabled": true,
-      "threshold": 0.5
-    }
-  },
-  "recognition": {
-    "trigger_word": "антошка",
-    "wake_word": "",
-    "min_confidence": 0.4,
-    "stop_words": [
-      "пожалуйста",
-      "ну",
-      "смотри",
-      "вообще"
-    ],
-    "synonyms": {
-      "ютуб": "youtube",
-      "гугл": "google",
-      "инет": "интернет"
-    }
+  "stt": {
+    "mode": "vosk",
+    "vosk_model_path": "models/vosk",
+    "vosk_model_path_ru": "models/vosk",
+    "vosk_model_path_en": "models/vosk_en",
+    "device": 2,
+    "language": "ru",
+    "min_listen_seconds": 12.0,
+    "max_listen_seconds": 20,
+    "silence_seconds_to_stop": 1.0
   },
   "tts": {
-    "engine": "pyttsx3",
-    "rate": 175,
-    "volume": 0.9,
-    "voice": "russian",
-    "gender": "female"
-  },
-  "security": {
-    "dangerous_intents": [
-      "SHUTDOWN",
-      "RESTART",
-      "DELETE_FILE",
-      "FORMAT_DISK"
-    ],
-    "confirmation": {
-      "enabled": true,
-      "timeout": 10,
-      "phrases": {
-        "confirm": [
-          "подтверждаю",
-          "да",
-          "согласен"
-        ],
-        "cancel": [
-          "отмена",
-          "нет",
-          "стоп"
-        ]
-      }
-    },
-    "paths": {
-      "allowed": [
-        "~/Documents",
-        "~/Downloads",
-        "~/Desktop"
-      ],
-      "blocked": [
-        "/etc",
-        "/bin",
-        "/sbin",
-        "C:\\Windows"
-      ]
-    },
-    "dangerous_mode": false
-  },
-  "skills": {
     "enabled": true,
-    "default": [
-      "help",
-      "time",
-      "open",
-      "search",
-      "timer",
-      "calculator"
-    ],
-    "custom_path": "skills"
+    "provider": "auto",
+    "rate": 195,
+    "volume": 0.7,
+    "pitch": 20,
+    "voice_ru": "ru-RU-DmitryNeural",
+    "voice_en": "en-GB-SoniaNeural",
+    "voice_name_contains_ru": "ru-RU-DmitryNeural",
+    "voice_name_contains_en": "en-GB-SoniaNeural"
   },
-  "web": {
-    "default_search_engine": "https://www.google.com/search?q=",
-    "quick_sites": {
-      "youtube": "https://youtube.com",
-      "вконтакте": "https://vk.com",
-      "яндекс": "https://yandex.ru",
-      "гугл": "https://google.com"
-    }
+  "safety": {
+    "dangerous_mode": false,
+    "confirm_phrase": "подтверждаю",
+    "confirm_ttl_seconds": 10
   },
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "history_max_messages": 10
+  },
+  "custom_sites": {},
+  "custom_apps": {},
   "ui": {
-    "show_welcome": true,
-    "show_recognized_text": true,
-    "color_output": true
-  },
-  "logging": {
-    "level": "INFO",
-    "file": "logs/antoshka.log",
-    "max_size_mb": 10
-  },
-  "user": {
-    "name": "Пользователь",
-    "preferences": {
-      "greeting_style": "friendly"
-    }
+    "wake_word": true,
+    "continuous_dialogue": true,
+    "hands_free": true,
+    "ai_mode": true,
+    "ai_mode_autostart": true,
+    "voice_filter_lang": "RU",
+    "voice_filter_gender": "Male",
+    "theme_preset": "neon",
+    "accent_color": "#7dd3fc",
+    "background_intensity": 0.48,
+    "show_start_screen": true,
+    "voice_response_timeout_sec": 9,
+    "alerts_enabled": true,
+    "alerts_sound": "Music\\Kioko - The Phantom Traveler.mp3",
+    "alerts_sound_name": "Kioko - The Phantom Traveler",
+    "alerts_sound_path": "",
+    "alerts_custom_sounds": [],
+    "alerts_volume": 80,
+    "alerts_loop": true,
+    "snooze_default_minutes": 3,
+    "snooze_quick_enabled": true,
+    "snooze_quick_buttons": [
+      1,
+      3,
+      5,
+      10,
+      15
+    ],
+    "snooze_dropdown_enabled": true,
+    "snooze_dropdown_options": [
+      1,
+      3,
+      5,
+      10,
+      15,
+      30
+    ],
+    "timer_restart_enabled": true,
+    "system_notifications": true,
+    "notify_show_text": true,
+    "notify_show_icon": true,
+    "banner_hidden": false,
+    "preferred_stt_mode": "vosk",
+    "notify_tray_fallback_dup": true,
+    "alert_popup_enabled": true,
+    "alert_popup_auto_close_sec": 20,
+    "suggestions_enabled": true,
+    "suggestions_send_on_click": true
   }
 }

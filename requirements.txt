@@ -1,0 +1,12 @@
+pyttsx3
+edge-tts
+pywin32
+winsdk
+vosk
+sounddevice
+numpy
+httpx
+python-dotenv>=1.0.0
+openai>=1.0.0
+PySide6
+Pillow

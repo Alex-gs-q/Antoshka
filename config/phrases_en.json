@@ -1,0 +1,43 @@
+{
+  "greet": [
+    "hello",
+    "hi",
+    "hey",
+    "good morning",
+    "good afternoon",
+    "good evening"
+  ],
+  "help": [
+    "help",
+    "commands",
+    "what can you do",
+    "show commands"
+  ],
+  "time": [
+    "what time is it",
+    "current time",
+    "time"
+  ],
+  "date": [
+    "what date is it",
+    "what day is it",
+    "date",
+    "today's date"
+  ],
+  "open_url": [
+    "open youtube",
+    "open google",
+    "open vk",
+    "open site"
+  ],
+  "open_path": [
+    "open folder",
+    "open file"
+  ],
+  "exit": [
+    "exit",
+    "quit",
+    "bye",
+    "stop"
+  ]
+}
