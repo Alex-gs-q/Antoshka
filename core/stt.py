@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -7,12 +9,22 @@ from typing import Optional
 from core.config import save_settings
 from core.language import resolve_language
 from core.logger import setup_logger
+from core.resources import resource_path
 
 
 @dataclass
 class STTConfig:
     mode: str = "text"
     prompt: str = "Ты: "
+
+
+@dataclass
+class STTStatus:
+    available: bool
+    code: str
+    requested_mode: str
+    resolved_model_path: Path | None = None
+    detail: str = ""
 
 
 class BaseSTT:
@@ -44,44 +56,148 @@ class TextSTT(BaseSTT):
         return text
 
 
-def create_stt(settings: dict) -> BaseSTT:
+def validate_vosk_model_dir(path: Path | str) -> bool:
+    p = Path(path)
+    if not p.exists() or not p.is_dir():
+        return False
+    if not (p / "conf").is_dir():
+        return False
+    marker_dirs = ((p / "graph").is_dir(), (p / "am").is_dir(), (p / "ivector").is_dir())
+    marker_files = (
+        (p / "HCLG.fst").is_file(),
+        (p / "final.mdl").is_file(),
+        (p / "conf" / "model.conf").is_file(),
+    )
+    return any(marker_dirs) or any(marker_files)
+
+
+def is_valid_vosk_model_dir(path: Path | str) -> bool:
+    return validate_vosk_model_dir(path)
+
+
+def _glob_dirs(base: Path, pattern: str) -> list[Path]:
+    if not base.exists() or not base.is_dir():
+        return []
+    try:
+        return [p for p in base.glob(pattern) if p.is_dir()]
+    except Exception:
+        return []
+
+
+def _frozen_bases() -> list[Path]:
+    bases: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        bases.append(Path(str(meipass)))
+    bases.append(Path(sys.executable).resolve().parent)
+    return bases
+
+
+def _candidate_model_paths(settings: dict, lang: str) -> list[Path]:
+    stt_raw = settings.get("stt", {}) or {}
+    configured = [
+        stt_raw.get(f"vosk_model_path_{lang}"),
+        stt_raw.get("vosk_model_path"),
+    ]
+    candidates: list[Path] = []
+    for item in configured:
+        if item:
+            candidates.append(Path(str(item)))
+
+    bases = [Path("."), Path.cwd(), resource_path(Path(".")), resource_path(Path("_internal"))]
+    bases.extend(_frozen_bases())
+    for base in bases:
+        candidates.append(base / "models" / "vosk")
+        candidates.extend(_glob_dirs(base / "models", "vosk-model*"))
+        candidates.append(base / "_internal" / "models" / "vosk")
+        candidates.extend(_glob_dirs(base / "_internal" / "models", "vosk-model*"))
+
+    out: list[Path] = []
+    seen: set[str] = set()
+    for p in candidates:
+        variants = [p]
+        if not p.is_absolute():
+            variants.append(resource_path(p))
+        for v in variants:
+            key = str(v.resolve()) if v.exists() else os.path.normcase(str(v))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(v)
+    return out
+
+
+def resolve_vosk_model_path(settings: dict, lang: str = "ru") -> Path | None:
+    for candidate in _candidate_model_paths(settings, lang):
+        if validate_vosk_model_dir(candidate):
+            return candidate
+    return None
+
+
+def get_stt_status(settings: dict) -> STTStatus:
     logger = setup_logger()
     stt_raw = settings.get("stt", {}) or {}
     mode = (stt_raw.get("mode") or "text").lower()
-    lang_mode = stt_raw.get("language") or (settings.get("app", {}) or {}).get(
-        "language", "auto"
-    )
+    lang_mode = stt_raw.get("language") or (settings.get("app", {}) or {}).get("language", "auto")
     lang = resolve_language(lang_mode, None, fallback="ru")
     if lang_mode == "auto":
         logger.info("STT language auto -> using %s model", lang)
     else:
         logger.info("STT language: %s", lang)
 
+    if mode not in {"vosk", "auto"}:
+        return STTStatus(available=False, code="not_requested", requested_mode=mode)
+
+    model_path = resolve_vosk_model_path(settings, lang=lang)
+    if model_path is not None:
+        return STTStatus(available=True, code="ready", requested_mode=mode, resolved_model_path=model_path)
+
+    if lang != "ru":
+        ru_path = resolve_vosk_model_path(settings, lang="ru")
+        if ru_path is not None:
+            return STTStatus(
+                available=True,
+                code="ready_fallback_lang",
+                requested_mode=mode,
+                resolved_model_path=ru_path,
+                detail=lang,
+            )
+    return STTStatus(available=False, code="missing_model", requested_mode=mode)
+
+
+def _attach_status(stt: BaseSTT, status: STTStatus) -> BaseSTT:
+    setattr(stt, "_stt_available", bool(status.available))
+    setattr(stt, "_stt_status_code", str(status.code))
+    setattr(stt, "_stt_requested_mode", str(status.requested_mode))
+    setattr(stt, "_stt_model_path", str(status.resolved_model_path) if status.resolved_model_path else "")
+    return stt
+
+
+def create_stt(settings: dict) -> BaseSTT:
+    logger = setup_logger()
+    stt_raw = settings.get("stt", {}) or {}
+    mode = (stt_raw.get("mode") or "text").lower()
+    status = get_stt_status(settings)
+
     if mode in {"vosk", "auto"}:
         try:
             # Lazy import to avoid crash if vosk deps not installed in text mode
-            from core.stt_vosk import VoskSTT, VoskConfig
+            from core.stt_vosk import VoskConfig, VoskSTT
             import sounddevice as sd
 
-            fallback_from = None
-            model_path = Path(
-                stt_raw.get(f"vosk_model_path_{lang}")
-                or stt_raw.get("vosk_model_path")
-                or "models/vosk"
+            model_path = status.resolved_model_path
+            lang = resolve_language(
+                stt_raw.get("language") or (settings.get("app", {}) or {}).get("language", "auto"),
+                None,
+                fallback="ru",
             )
-            if not model_path.exists() and lang != "ru":
-                ru_path = Path(
-                    stt_raw.get("vosk_model_path_ru")
-                    or stt_raw.get("vosk_model_path")
-                    or "models/vosk"
-                )
-                if ru_path.exists():
-                    fallback_from = lang
-                    lang = "ru"
-                    model_path = ru_path
-                    logger.warning("Vosk model for %s missing, fallback to %s", fallback_from, lang)
-            if not model_path.exists():
-                raise FileNotFoundError(f"Vosk model not found at {model_path}")
+            fallback_from = status.detail if status.code == "ready_fallback_lang" else None
+            if fallback_from:
+                lang = "ru"
+                logger.warning("Vosk model for %s missing, fallback to %s", fallback_from, lang)
+            if model_path is None:
+                raise FileNotFoundError("Vosk model not found")
+
             device = stt_raw.get("device")
             if device is None:
                 try:
@@ -100,6 +216,7 @@ def create_stt(settings: dict) -> BaseSTT:
                 except Exception as e:  # noqa: BLE001
                     logger.exception("Failed to resolve default input device: %s", e)
                     device = None
+
             stt = VoskSTT(
                 VoskConfig(
                     model_path=str(model_path),
@@ -112,12 +229,22 @@ def create_stt(settings: dict) -> BaseSTT:
             setattr(stt, "_lang", lang)
             if fallback_from:
                 setattr(stt, "_fallback_from", fallback_from)
-            return stt
+            return _attach_status(stt, status)
         except Exception as e:  # noqa: BLE001
             if mode == "vosk":
                 logger.warning("Vosk STT unavailable, falling back to text: %s", e)
             else:
                 logger.info("STT auto fallback to text: %s", e)
+            fail_status = status
+            if fail_status.code.startswith("ready"):
+                fail_status = STTStatus(
+                    available=False,
+                    code="runtime_unavailable",
+                    requested_mode=mode,
+                    resolved_model_path=status.resolved_model_path,
+                    detail=str(e),
+                )
+            return _attach_status(TextSTT(STTConfig(mode="text", prompt="Ты: ")), fail_status)
 
     logger.info("STT mode: text")
-    return TextSTT(STTConfig(mode="text", prompt="Ты: "))
+    return _attach_status(TextSTT(STTConfig(mode="text", prompt="Ты: ")), status)

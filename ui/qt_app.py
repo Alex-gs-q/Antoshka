@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import sys
 import threading
 from datetime import datetime, timedelta
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QListWidget,
     QPushButton,
     QProgressBar,
@@ -83,7 +85,7 @@ from core.version import __version__
 from core.logger import setup_logger
 from core.resources import resource_path
 from core.paths import data_dir, logs_dir
-from core.stt import TextSTT, create_stt
+from core.stt import create_stt, get_stt_status
 from core.wake_word import WakeWordListener, WakeWordConfig
 from llm.client import LLMClient, LLMConfig
 from services.chat_history import append_chat, clear_chat_history
@@ -102,6 +104,16 @@ from services.tts.tts_worker import TTSWorker
 from services.tts.voices import list_edge_voices, list_pyttsx3_voices
 from services.voice_timeout import get_voice_timeout_seconds, apply_timeout_ms
 from ui.theme import build_theme, choose_font
+try:
+    from services.system_volume import (
+        get_system_volume,
+        set_system_volume,
+        set_system_mute,
+    )
+except Exception:
+    get_system_volume = None
+    set_system_volume = None
+    set_system_mute = None
 
 
 @dataclass(frozen=True)
@@ -159,6 +171,22 @@ class IconButton(QPushButton):
 
     def is_active(self) -> bool:
         return self._active
+
+
+class StableSlider(QSlider):
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        # Prevent accidental value jumps while scrolling settings.
+        event.ignore()
+
+
+class StableComboBox(QComboBox):
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+
+class StableSpinBox(QSpinBox):
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
 
 
 class ChatBubble(QFrame):
@@ -1386,8 +1414,10 @@ class AntoshkaWindow(QMainWindow):
         self._tts_warned = False
         self.listening = False
         self.ai_mode = bool(self.settings.get("ui", {}).get("ai_mode", False))
+        self.settings.setdefault("app", {}).setdefault("ai_enabled", bool(self.ai_mode))
         self._ai_inflight = False
         self._llm_queue: list[tuple[str, str]] = []
+        self._ai_session_token = 0
         self._last_status = ""
         self.wake_listener = None
         self.language_mode = normalize_language_mode(
@@ -1421,6 +1451,11 @@ class AntoshkaWindow(QMainWindow):
         self._voice_timeout_seconds: int | None = None
         self._voice_timeout_expired_ids: set[int] = set()
         self._listen_interrupted = False
+        self._stt_available = False
+        self._stt_status_code = ""
+        self._stt_model_missing = False
+        self._last_stt_error_code = ""
+        self._active_banners: dict[str, tuple[str, str]] = {}
         self._init_wake_word()
         self._apply_stt_mode_ui()
         self._sync_ai_button()
@@ -1465,12 +1500,7 @@ class AntoshkaWindow(QMainWindow):
             return
         if ui.get("ai_mode", False):
             return
-        ui["ai_mode"] = True
-        self.settings["ui"] = ui
-        save_settings(self.settings)
-        self.ai_mode = True
-        self._sync_ai_button()
-        self._enqueue_notice(tr("msg_ai_enabled", self.language))
+        self._set_ai_enabled(True, announce=True)
 
     def _ai_check_message(self, ok: bool, reason: str) -> str:
         if ok:
@@ -1511,6 +1541,8 @@ class AntoshkaWindow(QMainWindow):
 
     def _init_stt(self) -> None:
         self.stt = create_stt(self.settings)
+        self._stt_available = bool(getattr(self.stt, "_stt_available", False))
+        self._stt_status_code = str(getattr(self.stt, "_stt_status_code", ""))
         self.log.info("STT init ok: %s", type(self.stt).__name__)
 
     def _init_tray_and_notifications(self) -> None:
@@ -1553,22 +1585,72 @@ class AntoshkaWindow(QMainWindow):
             self._append_message(msg, is_user=False)
         self._pending_notices.clear()
 
+    def update_or_set_banner(self, key: str, text: str, level: str = "warning") -> None:
+        self._active_banners[key] = (text, level)
+        banner = getattr(self, "status_banner", None)
+        if banner is None:
+            return
+        preferred = self._active_banners.get("stt_missing_model") or self._active_banners.get("stt_fallback")
+        if preferred is None:
+            banner.hide()
+            return
+        current_text, current_level = preferred
+        banner.setText(current_text)
+        banner.setVisible(bool(current_text))
+        banner.setProperty("level", current_level)
+        banner.style().unpolish(banner)
+        banner.style().polish(banner)
+
+    def clear_banner(self, key: str) -> None:
+        self._active_banners.pop(key, None)
+        banner = getattr(self, "status_banner", None)
+        if banner is None:
+            return
+        preferred = self._active_banners.get("stt_missing_model") or self._active_banners.get("stt_fallback")
+        if preferred is None:
+            banner.hide()
+            return
+        text, level = preferred
+        banner.setText(text)
+        banner.setVisible(True)
+        banner.setProperty("level", level)
+        banner.style().unpolish(banner)
+        banner.style().polish(banner)
+
     def _init_context(self) -> None:
         self.scheduler = Scheduler(notify=self._notify)
+        self._volume_persists_to_tts = False
         volume = None
-        if self.tts_worker is not None:
+        has_system_volume = (
+            sys.platform.startswith("win")
+            and get_system_volume is not None
+            and set_system_volume is not None
+            and set_system_mute is not None
+        )
+        if has_system_volume:
+            system_volume = VolumeController(
+                get_level=get_system_volume,
+                set_level=set_system_volume,
+                set_mute_fn=set_system_mute,
+            )
+            if system_volume.get_level() is not None:
+                volume = system_volume
+                self.log.info("Using Windows system volume controller")
+        if volume is None and self.tts_worker is not None:
             volume = VolumeController(
                 get_level=self.tts_worker.get_volume,
                 set_level=self.tts_worker.set_volume,
                 set_mute_fn=self.tts_worker.set_mute,
             )
+            self._volume_persists_to_tts = True
+            self.log.info("Using TTS volume controller fallback")
         self.app_context = AppContext(
             notify=self._notify,
             data_dir=data_dir(),
             scheduler=self.scheduler,
             volume=volume,
             llm_client=self.llm_client,
-            on_settings_changed=self._on_settings_changed,
+            on_settings_changed=self._request_settings_update,
             language_mode=self.language_mode,
             language=self.language,
         )
@@ -1580,10 +1662,20 @@ class AntoshkaWindow(QMainWindow):
             )
         )
 
+    def _request_settings_update(self, settings: dict) -> None:
+        # Command handlers can run in worker threads; marshal settings apply to UI thread.
+        QTimer.singleShot(0, self, lambda s=dict(settings): self._on_settings_changed(s))
+
     def _on_settings_changed(self, settings: dict) -> None:
         prev_lang = self.language
         prev_mode = self.language_mode
         self.settings = settings
+        self.ai_mode = bool(
+            (self.settings.get("app", {}) or {}).get(
+                "ai_enabled",
+                bool((self.settings.get("ui", {}) or {}).get("ai_mode", False)),
+            )
+        )
         self.language_mode = normalize_language_mode(
             (self.settings.get("app", {}) or {}).get("language", "auto")
         )
@@ -1606,10 +1698,16 @@ class AntoshkaWindow(QMainWindow):
         self._apply_stt_mode_ui()
         self._apply_styles()
         self._apply_language()
+        self._sync_ai_button()
         self._report_stt_status()
 
     def _report_stt_status(self) -> None:
-        requested_mode = (self.settings.get("stt", {}) or {}).get("mode", "text")
+        stt_status = get_stt_status(self.settings)
+        stt_available = bool(getattr(self.stt, "_stt_available", stt_status.available))
+        status_code = str(getattr(self.stt, "_stt_status_code", stt_status.code))
+        self._stt_available = stt_available
+        self._stt_status_code = status_code
+        requested_mode = str((self.settings.get("stt", {}) or {}).get("mode", "text"))
         fallback_from = getattr(self.stt, "_fallback_from", None)
         fallback_to = getattr(self.stt, "_lang", None)
         if fallback_from and fallback_to:
@@ -1617,9 +1715,28 @@ class AntoshkaWindow(QMainWindow):
                 from_lang=str(fallback_from).upper(), to_lang=str(fallback_to).upper()
             )
             self.log.warning("STT fallback: %s -> %s", fallback_from, fallback_to)
-            self._enqueue_notice(msg)
-        if isinstance(self.stt, TextSTT) and str(requested_mode) in {"vosk", "auto"}:
-            self._enqueue_notice(tr("msg_stt_model_missing", self.language))
+            self.update_or_set_banner("stt_fallback", msg, "warning")
+        else:
+            self.clear_banner("stt_fallback")
+
+        if not stt_available and requested_mode in {"vosk", "auto"}:
+            self._stt_model_missing = True
+            self.update_or_set_banner("stt_missing_model", tr("msg_stt_model_missing", self.language), "warning")
+        else:
+            self._stt_model_missing = False
+            self.clear_banner("stt_missing_model")
+            self._last_stt_error_code = ""
+        if self._stt_model_missing:
+            self._last_stt_error_code = status_code
+        self._sync_stt_missing_ui()
+
+    def _sync_stt_missing_ui(self) -> None:
+        btn = getattr(self, "stt_fix_btn", None)
+        if btn is not None:
+            btn.setVisible(bool(self._stt_model_missing))
+            if self._stt_model_missing:
+                btn.setToolTip(tr("msg_stt_model_missing", self.language))
+        self._apply_stt_mode_ui()
 
     def _init_ui(self) -> None:
         self.setWindowTitle(tr("app_name", self.language))
@@ -1682,8 +1799,13 @@ class AntoshkaWindow(QMainWindow):
         status = QLabel("")
         status.setObjectName("Status")
         self.status_label = status
+        self.status_banner = QLabel("")
+        self.status_banner.setObjectName("StatusBanner")
+        self.status_banner.setWordWrap(True)
+        self.status_banner.hide()
         title_box.addWidget(title)
         title_box.addWidget(status)
+        title_box.addWidget(self.status_banner)
         top.addLayout(title_box)
         top.addStretch(1)
         self.ai_badge = QLabel(tr("btn_ai", self.language))
@@ -1694,6 +1816,11 @@ class AntoshkaWindow(QMainWindow):
         self.ai_busy.setObjectName("AIBusy")
         self.ai_busy.hide()
         top.addWidget(self.ai_busy)
+        self.stt_fix_btn = QPushButton(tr("btn_open_settings", self.language))
+        self.stt_fix_btn.setObjectName("STTFix")
+        self.stt_fix_btn.clicked.connect(self._open_settings)
+        self.stt_fix_btn.hide()
+        top.addWidget(self.stt_fix_btn)
         settings_btn = IconButton(self._icon(self.icons.settings), self._icon(self.icons.settings_active))
         settings_btn.clicked.connect(self._open_settings)
         top.addWidget(settings_btn)
@@ -1774,6 +1901,14 @@ class AntoshkaWindow(QMainWindow):
                 QMainWindow {{ background: transparent; }}
                 #Title {{ font-size: 20px; font-weight: 600; color: {theme.text_primary.name()}; }}
                 #Status {{ font-size: 12px; color: {theme.text_muted.name()}; }}
+                #StatusBanner {{
+                    font-size: 11px;
+                    color: {theme.text_primary.name()};
+                    background: rgba(255, 180, 0, 0.12);
+                    border: 1px solid rgba(255, 180, 0, 0.35);
+                    border-radius: 8px;
+                    padding: 4px 8px;
+                }}
                 QLineEdit {{
                     background: {theme.input_bg.name()};
                     border: 1px solid {theme.input_border.name()};
@@ -1814,6 +1949,13 @@ class AntoshkaWindow(QMainWindow):
                 #ClearChat:hover {{
                     border-color: {theme.accent.name()};
                     background: rgba(255, 255, 255, 0.04);
+                }}
+                #STTFix {{
+                    background: rgba(255, 255, 255, 0.06);
+                    border: 1px solid {theme.accent.name()};
+                    border-radius: 10px;
+                    padding: 6px 10px;
+                    color: {theme.text_primary.name()};
                 }}
                 #ClearChat:pressed {{
                     background: rgba(255, 255, 255, 0.08);
@@ -2115,9 +2257,32 @@ class AntoshkaWindow(QMainWindow):
                     background: {theme.accent.name()};
                     border-radius: 6px;
                 }}
+                QTextEdit, QListWidget {{
+                    background: {theme.input_bg.name()};
+                    border: 1px solid {theme.input_border.name()};
+                    border-radius: 10px;
+                    color: {theme.text_primary.name()};
+                }}
                 QComboBox, QLineEdit, QSpinBox {{
                     min-height: 32px;
                     padding: 4px 8px;
+                }}
+                QComboBox {{
+                    background: {theme.input_bg.name()};
+                    border: 1px solid {theme.input_border.name()};
+                    border-radius: 10px;
+                    color: {theme.text_primary.name()};
+                }}
+                QComboBox::drop-down {{
+                    border: none;
+                    width: 22px;
+                }}
+                QComboBox QAbstractItemView {{
+                    background: {theme.card_bg.name()};
+                    border: 1px solid {theme.card_border.name()};
+                    color: {theme.text_primary.name()};
+                    selection-background-color: {theme.accent.name()};
+                    selection-color: #0b1020;
                 }}
             """
         )
@@ -2126,25 +2291,82 @@ class AntoshkaWindow(QMainWindow):
         if getattr(self, "start_screen", None) is not None:
             self.start_screen.set_theme(self.theme)
 
+    def _apply_dialog_theme(self, dlg: QDialog) -> None:
+        theme = self.theme
+        dlg.setStyleSheet(
+            f"""
+                QDialog {{
+                    background: {theme.card_bg.name()};
+                    color: {theme.text_primary.name()};
+                }}
+                QLabel {{
+                    color: {theme.text_primary.name()};
+                }}
+                QPushButton {{
+                    background: {theme.button_bg.name()};
+                    border: 1px solid {theme.button_border.name()};
+                    border-radius: 10px;
+                    padding: 8px 12px;
+                    color: {theme.text_primary.name()};
+                }}
+                QPushButton:hover {{
+                    border-color: {theme.accent.name()};
+                }}
+                QTextEdit, QListWidget {{
+                    background: {theme.input_bg.name()};
+                    border: 1px solid {theme.input_border.name()};
+                    border-radius: 10px;
+                    color: {theme.text_primary.name()};
+                }}
+                QComboBox, QLineEdit, QSpinBox {{
+                    background: {theme.input_bg.name()};
+                    border: 1px solid {theme.input_border.name()};
+                    border-radius: 10px;
+                    color: {theme.text_primary.name()};
+                    min-height: 30px;
+                    padding: 4px 8px;
+                }}
+                QComboBox QAbstractItemView {{
+                    background: {theme.card_bg.name()};
+                    border: 1px solid {theme.card_border.name()};
+                    color: {theme.text_primary.name()};
+                    selection-background-color: {theme.accent.name()};
+                    selection-color: #0b1020;
+                }}
+            """
+        )
+
     def _apply_language(self) -> None:
+        def _ui_text(key: str, fallback_ru: str) -> str:
+            value = tr(key, self.language)
+            if self.language == "ru" and re.search(r"[A-Za-z]", value or ""):
+                self.log.warning("I18N_LATIN_IN_RU key=%s value=%s", key, value)
+                return fallback_ru
+            return value
+
         self.setWindowTitle(tr("app_name", self.language))
         if getattr(self, "start_screen", None) is not None:
             self.start_screen.set_language(self.language)
         if getattr(self, "title_label", None) is not None:
             self.title_label.setText(tr("app_name", self.language))
-        self.input.setPlaceholderText(tr("placeholder", self.language))
-        self.listen_btn.setText(tr("btn_listen", self.language))
-        self.stop_btn.setText(tr("btn_stop", self.language))
-        self.history_btn.setText(tr("btn_history", self.language))
-        self.volume_btn.setText(tr("btn_volume", self.language))
-        self.ai_btn.setText(tr("btn_ai", self.language))
-        self.clear_btn.setText(tr("btn_clear_chat", self.language))
-        self.ai_badge.setText(tr("btn_ai", self.language))
+        self.input.setPlaceholderText(_ui_text("placeholder", "Напиши сообщение или нажми микрофон..."))
+        self.listen_btn.setText(_ui_text("btn_listen", "Слушать"))
+        self.stop_btn.setText(_ui_text("btn_stop", "Стоп"))
+        self.history_btn.setText(_ui_text("btn_history", "История"))
+        self.volume_btn.setText(_ui_text("btn_volume", "Звук"))
+        self.ai_btn.setText(_ui_text("btn_ai", "ИИ"))
+        self.clear_btn.setText(_ui_text("btn_clear_chat", "Очистить чат"))
+        self.ai_badge.setText(_ui_text("btn_ai", "ИИ"))
         if self._ai_inflight:
             self.ai_busy.setText(tr("msg_ai_inflight", self.language))
+        if getattr(self, "stt_fix_btn", None) is not None:
+            self.stt_fix_btn.setText(_ui_text("btn_open_settings", "Открыть настройки"))
         self._update_suggestions(force_reload=True)
         if self._help_overlay is not None:
             self._help_overlay.set_language(self.language, self._build_help_items(self.language))
+        if self._stt_model_missing:
+            self.update_or_set_banner("stt_missing_model", tr("msg_stt_model_missing", self.language), "warning")
+        self._sync_stt_missing_ui()
 
     def _start_chat(self) -> None:
         if self.stack.currentWidget() == self.chat_page:
@@ -2333,6 +2555,7 @@ class AntoshkaWindow(QMainWindow):
     def _confirm_clear_history(self) -> bool:
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("confirm_clear_title", self.language))
+        self._apply_dialog_theme(dlg)
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel(tr("confirm_clear_text", self.language)))
         btn_row = QHBoxLayout()
@@ -2486,7 +2709,7 @@ class AntoshkaWindow(QMainWindow):
         QTimer.singleShot(0, self, self._scroll_to_bottom)
         QTimer.singleShot(0, self, lambda c=card: c.adjustSize())
         QTimer.singleShot(0, self, lambda: self.chat_container.updateGeometry())
-        self._play_alert_sound_from_settings()
+        self._play_alert_sound_from_settings(kind=kind)
         self._active_alert_meta = event.payload
         self.log.info("ALERT start type=%s id=%s sound=%s", kind, event.id, self.settings.get("ui", {}).get("alerts_sound"))
         self._show_in_app_toast(title, msg)
@@ -2985,7 +3208,7 @@ class AntoshkaWindow(QMainWindow):
         anim.setEasingCurve(QEasingCurve.OutCubic)
         anim.start()
 
-    def _play_alert_sound_from_settings(self) -> None:
+    def _play_alert_sound_from_settings(self, kind: str = "") -> None:
         settings = get_alert_settings(self.settings)
         if not bool(settings.get("alerts_enabled", True)):
             return
@@ -2993,6 +3216,9 @@ class AntoshkaWindow(QMainWindow):
         custom_path = str(settings.get("alerts_sound_path", ""))
         volume = int(settings.get("alerts_volume", 80))
         loop = bool(settings.get("alerts_loop", True))
+        if str(kind or "").lower() == "timer":
+            # Timers should not ring forever even when global alert loop is enabled.
+            loop = False
         path = custom_path or rel
         if custom_path and not Path(custom_path).exists():
             self.log.warning("Custom alert sound missing: %s", custom_path)
@@ -3142,7 +3368,12 @@ class AntoshkaWindow(QMainWindow):
             self.log.info("Voice request start: len=%s", len(text))
             request_id = self._start_voice_timeout(lang)
 
-        allow_llm = bool(self.ai_mode and self.llm_client is not None)
+        allow_llm = bool(
+            self.ai_mode
+            and bool((self.settings.get("app", {}) or {}).get("ai_enabled", True))
+            and self.llm_client is not None
+        )
+        ai_token = self._ai_session_token
         route = self.dialogue.router.route(text, lang=lang)
         needs_llm = allow_llm and route is None
         if needs_llm and self.llm_client is not None:
@@ -3189,6 +3420,11 @@ class AntoshkaWindow(QMainWindow):
                 if request_id is not None and request_id in self._voice_timeout_expired_ids:
                     self._voice_timeout_expired_ids.discard(request_id)
                     self.log.info("Response ignored after timeout: id=%s", request_id)
+                    return
+                if needs_llm and (not self.ai_mode or ai_token != self._ai_session_token):
+                    self.log.info("AI response ignored after disable")
+                    self._set_ai_busy(False)
+                    self._set_status("ready")
                     return
                 if request_id is not None:
                     self.log.info("Response received: id=%s", request_id)
@@ -3270,7 +3506,7 @@ class AntoshkaWindow(QMainWindow):
         self._set_status("ready")
 
     def _listen(self) -> None:
-        if isinstance(self.stt, TextSTT):
+        if not bool(self._stt_available):
             self._set_status("text mode")
             return
         if self.listening:
@@ -3326,10 +3562,26 @@ class AntoshkaWindow(QMainWindow):
 
     def _toggle_listen(self) -> None:
         self.log.info("UI mic toggle: listening=%s", self.listening)
+        if not bool(self._stt_available):
+            self._show_vosk_required_dialog()
+            return
         if self.listening:
             self._stop_listen()
         else:
             self._listen()
+
+    def _show_vosk_required_dialog(self) -> None:
+        if self._stt_status_code != "missing_model":
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(tr("msg_stt_model_missing", self.language))
+        box.setText(tr("tooltip_listen_disabled_vosk", self.language))
+        open_btn = box.addButton(tr("btn_open_settings", self.language), QMessageBox.AcceptRole)
+        box.addButton(tr("confirm_no", self.language), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            self._open_settings()
 
     def _open_about(self, parent: QWidget | None = None) -> None:
         lang = self.language
@@ -3372,6 +3624,7 @@ class AntoshkaWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("settings_title", self.language))
         dlg.setMinimumSize(640, 720)
+        self._apply_dialog_theme(dlg)
         self.log.info("Settings window build: min_size=%s sections=5", dlg.minimumSize())
 
         layout = QVBoxLayout(dlg)
@@ -3441,7 +3694,7 @@ class AntoshkaWindow(QMainWindow):
         # Language & STT
         lang_card, lang_grid = card(tr("section_language", self.language))
         lang_row = 0
-        lang_mode = QComboBox()
+        lang_mode = StableComboBox()
         lang_mode.addItem(tr("opt_auto", self.language), "auto")
         lang_mode.addItem(tr("opt_ru", self.language), "ru")
         lang_mode.addItem(tr("opt_en", self.language), "en")
@@ -3449,7 +3702,7 @@ class AntoshkaWindow(QMainWindow):
         idx_lang = lang_mode.findData(current_lang)
         if idx_lang >= 0:
             lang_mode.setCurrentIndex(idx_lang)
-        stt_mode = QComboBox()
+        stt_mode = StableComboBox()
         stt_mode.addItem(tr("opt_auto", self.language), "auto")
         stt_mode.addItem(tr("opt_text", self.language), "text")
         stt_mode.addItem(tr("opt_vosk", self.language), "vosk")
@@ -3458,7 +3711,7 @@ class AntoshkaWindow(QMainWindow):
             stt_mode.setCurrentIndex(idx_stt)
         show_start = QCheckBox("")
         show_start.setChecked(bool(self.settings.get("ui", {}).get("show_start_screen", True)))
-        voice_timeout = QSpinBox()
+        voice_timeout = StableSpinBox()
         voice_timeout.setRange(5, 30)
         voice_timeout.setSuffix(f" {tr('unit_seconds', self.language)}")
         voice_timeout.setValue(get_voice_timeout_seconds(self.settings, default=12))
@@ -3468,11 +3721,78 @@ class AntoshkaWindow(QMainWindow):
         lang_row = add_row(lang_grid, lang_row, tr("label_voice_timeout", self.language), voice_timeout)
         add_helper(lang_card, tr("helper_language", self.language))
 
+        # Vosk
+        vosk_card, vosk_grid = card(tr("label_stt_section", self.language))
+        vosk_row = 0
+        vosk_model_path = QLineEdit(str((self.settings.get("stt", {}) or {}).get("vosk_model_path", "")))
+        vosk_model_path.setReadOnly(True)
+        vosk_model_path.setPlaceholderText(tr("msg_not_set", self.language))
+        vosk_model_status = QLabel("")
+        vosk_model_status.setObjectName("HelperText")
+        vosk_choose = QPushButton(tr("btn_choose_vosk_path", self.language))
+        vosk_help = QPushButton(tr("btn_vosk_install_help", self.language))
+        vosk_open_page = QPushButton(tr("btn_open_vosk_page", self.language))
+
+        def _refresh_vosk_status() -> None:
+            status = get_stt_status(self.settings)
+            raw = str((self.settings.get("stt", {}) or {}).get("vosk_model_path", "") or "")
+            if raw:
+                vosk_model_path.setText(raw)
+            else:
+                vosk_model_path.clear()
+            if status.available and status.resolved_model_path is not None:
+                vosk_model_status.setText(
+                    tr("msg_stt_model_found", self.language).format(path=str(status.resolved_model_path))
+                )
+            else:
+                vosk_model_status.setText(f"{tr('msg_stt_model_missing', self.language)} ❌")
+
+        def _pick_vosk_model() -> None:
+            picked = QFileDialog.getExistingDirectory(
+                dlg,
+                tr("btn_choose_vosk_path", self.language),
+                str(Path.cwd()),
+            )
+            if not picked:
+                return
+            candidate = Path(picked)
+            self.settings.setdefault("stt", {})["vosk_model_path"] = str(candidate)
+            save_settings(self.settings)
+            self._on_settings_changed(self.settings)
+            _refresh_vosk_status()
+
+        def _open_vosk_help() -> None:
+            box = QMessageBox(dlg)
+            box.setIcon(QMessageBox.Information)
+            box.setWindowTitle(tr("dialog_vosk_help_title", self.language))
+            box.setText(tr("dialog_vosk_help_body", self.language))
+            page_btn = box.addButton(tr("btn_open_vosk_page", self.language), QMessageBox.ActionRole)
+            box.addButton(tr("confirm_no", self.language), QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is page_btn:
+                QDesktopServices.openUrl(QUrl("https://alphacephei.com/vosk/models"))
+
+        vosk_choose.clicked.connect(_pick_vosk_model)
+        vosk_help.clicked.connect(_open_vosk_help)
+        vosk_open_page.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://alphacephei.com/vosk/models")))
+        vosk_btn_row_widget = QWidget()
+        vosk_btn_row = QHBoxLayout(vosk_btn_row_widget)
+        vosk_btn_row.setContentsMargins(0, 0, 0, 0)
+        vosk_btn_row.setSpacing(6)
+        vosk_btn_row.addWidget(vosk_choose)
+        vosk_btn_row.addWidget(vosk_help)
+        vosk_btn_row.addWidget(vosk_open_page)
+        vosk_row = add_row(vosk_grid, vosk_row, tr("label_vosk_model_path", self.language), vosk_model_path)
+        vosk_row = add_row(vosk_grid, vosk_row, tr("label_status", self.language), vosk_model_status)
+        vosk_row = add_row(vosk_grid, vosk_row, tr("label_actions", self.language), vosk_btn_row_widget)
+        add_helper(vosk_card, tr("helper_vosk_unpack", self.language))
+        _refresh_vosk_status()
+
         # Microphone
         mic_card, mic_grid = card(tr("section_mic", self.language))
         mic_row = 0
         devices = list_input_devices()
-        mic_combo = QComboBox()
+        mic_combo = StableComboBox()
         mic_combo.addItem(tr("label_default_device", self.language), None)
         for d in devices:
             mic_combo.addItem(d.name, d.index)
@@ -3549,14 +3869,14 @@ class AntoshkaWindow(QMainWindow):
         # Theme
         theme_card, theme_grid = card(tr("section_theme", self.language))
         theme_row = 0
-        theme_preset = QComboBox()
+        theme_preset = StableComboBox()
         theme_preset.addItems(["Dark", "Midnight", "Neon"])
         current_theme = str(self.settings.get("ui", {}).get("theme_preset", "dark")).title()
         idx_theme = theme_preset.findText(current_theme)
         if idx_theme >= 0:
             theme_preset.setCurrentIndex(idx_theme)
         accent_input = QLineEdit(str(self.settings.get("ui", {}).get("accent_color", "#7dd3fc")))
-        intensity_slider = QSlider(Qt.Horizontal)
+        intensity_slider = StableSlider(Qt.Horizontal)
         intensity_slider.setRange(30, 100)
         intensity_slider.setValue(int(float(self.settings.get("ui", {}).get("background_intensity", 0.7)) * 100))
         theme_row = add_row(theme_grid, theme_row, tr("label_theme_preset", self.language), theme_preset)
@@ -3569,24 +3889,24 @@ class AntoshkaWindow(QMainWindow):
         tts_row = 0
         tts_enabled = QCheckBox("")
         tts_enabled.setChecked(bool(self.settings.get("tts", {}).get("enabled", True)))
-        tts_provider = QComboBox()
+        tts_provider = StableComboBox()
         tts_provider.addItem("auto", "auto")
         tts_provider.addItem("pyttsx3", "pyttsx3")
         tts_provider.addItem("edge", "edge")
         idx_provider = tts_provider.findData(str(self.settings.get("tts", {}).get("provider", "auto")))
         if idx_provider >= 0:
             tts_provider.setCurrentIndex(idx_provider)
-        tts_rate = QSlider(Qt.Horizontal)
+        tts_rate = StableSlider(Qt.Horizontal)
         tts_rate.setRange(100, 240)
         tts_rate.setValue(int(self.settings.get("tts", {}).get("rate", 180)))
-        tts_volume = QSlider(Qt.Horizontal)
+        tts_volume = StableSlider(Qt.Horizontal)
         tts_volume.setRange(0, 100)
         tts_volume.setValue(int(float(self.settings.get("tts", {}).get("volume", 1.0)) * 100))
-        tts_pitch = QSlider(Qt.Horizontal)
+        tts_pitch = StableSlider(Qt.Horizontal)
         tts_pitch.setRange(-20, 20)
         tts_pitch.setValue(int(self.settings.get("tts", {}).get("pitch", 0)))
-        voice_ru = QComboBox()
-        voice_en = QComboBox()
+        voice_ru = StableComboBox()
+        voice_en = StableComboBox()
 
         def _populate_voices() -> None:
             if tts_provider.currentData() == "pyttsx3":
@@ -3667,7 +3987,7 @@ class AntoshkaWindow(QMainWindow):
         alerts_enabled.setChecked(bool(alert_settings.get("alerts_enabled", True)))
         alerts_loop = QCheckBox("")
         alerts_loop.setChecked(bool(alert_settings.get("alerts_loop", True)))
-        alerts_sound = QComboBox()
+        alerts_sound = StableComboBox()
         custom_list = QListWidget()
         custom_list.setMinimumHeight(90)
 
@@ -3720,7 +4040,7 @@ class AntoshkaWindow(QMainWindow):
                 alerts_sound.setCurrentIndex(idx)
 
         _refresh_sounds()
-        alerts_volume = QSlider(Qt.Horizontal)
+        alerts_volume = StableSlider(Qt.Horizontal)
         alerts_volume.setRange(0, 100)
         alerts_volume.setValue(int(alert_settings.get("alerts_volume", 80)))
         alerts_test = QPushButton(tr("btn_test_alert", self.language))
@@ -3785,7 +4105,7 @@ class AntoshkaWindow(QMainWindow):
         notify_test = QPushButton(tr("btn_test_notify", self.language))
         alert_popup_enabled = QCheckBox("")
         alert_popup_enabled.setChecked(bool(alert_settings.get("alert_popup_enabled", True)))
-        alert_popup_timeout = QSpinBox()
+        alert_popup_timeout = StableSpinBox()
         alert_popup_timeout.setRange(0, 120)
         alert_popup_timeout.setValue(int(alert_settings.get("alert_popup_auto_close_sec", 20)))
 
@@ -3803,7 +4123,7 @@ class AntoshkaWindow(QMainWindow):
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_alert_popup", self.language), alert_popup_enabled)
         alerts_row = add_row(alerts_grid, alerts_row, tr("label_alert_popup_timeout", self.language), alert_popup_timeout)
 
-        snooze_default = QSpinBox()
+        snooze_default = StableSpinBox()
         snooze_default.setRange(1, 30)
         snooze_default.setValue(int(alert_settings.get("snooze_default_minutes", 5)))
         snooze_quick_enabled = QCheckBox("")
@@ -3896,6 +4216,7 @@ class AntoshkaWindow(QMainWindow):
                 suggest_enabled.isChecked(),
                 suggest_send.isChecked(),
                 voice_timeout.value(),
+                vosk_model_path.text().strip(),
             )
             save_state.setText(tr("settings_saved", self.language))
             QTimer.singleShot(1200, dlg, lambda: save_state.setText(""))
@@ -3958,12 +4279,14 @@ class AntoshkaWindow(QMainWindow):
         suggestions_enabled: bool,
         suggestions_send_on_click: bool,
         voice_timeout: int,
+        vosk_model_path: str,
     ) -> None:
         lang_mode = (lang_mode_text or "auto").lower()
         self.settings.setdefault("app", {})["language"] = lang_mode
         self.settings.setdefault("stt", {})["mode"] = stt_mode
         self.settings.setdefault("stt", {})["device"] = mic_device
         self.settings.setdefault("stt", {})["language"] = lang_mode
+        self.settings.setdefault("stt", {})["vosk_model_path"] = str(vosk_model_path or "")
         self.settings.setdefault("tts", {})["enabled"] = bool(tts_enabled)
         self.settings.setdefault("tts", {})["provider"] = tts_provider
         self.settings.setdefault("tts", {})["rate"] = int(tts_rate)
@@ -4022,6 +4345,7 @@ class AntoshkaWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("title_history", self.language))
         dlg.setMinimumSize(560, 420)
+        self._apply_dialog_theme(dlg)
         layout = QVBoxLayout(dlg)
         history = read_json(data_dir() / "history.json", default=[])
         box = QTextEdit()
@@ -4045,10 +4369,11 @@ class AntoshkaWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("title_volume", self.language))
         dlg.setMinimumSize(360, 200)
+        self._apply_dialog_theme(dlg)
         layout = QVBoxLayout(dlg)
         current = self.app_context.volume.get_level()
         current = 1.0 if current is None else current
-        slider = QSlider(Qt.Horizontal)
+        slider = StableSlider(Qt.Horizontal)
         slider.setRange(0, 100)
         slider.setValue(int(current * 100))
         layout.addWidget(slider)
@@ -4061,6 +4386,9 @@ class AntoshkaWindow(QMainWindow):
         level = max(0, min(100, int(value))) / 100.0
         if self.app_context.volume:
             self.app_context.volume.set_absolute(level)
+        if self._volume_persists_to_tts:
+            self.settings.setdefault("tts", {})["volume"] = level
+            save_settings(self.settings)
         dlg.accept()
 
     def _toggle_ai_mode(self) -> None:
@@ -4070,10 +4398,23 @@ class AntoshkaWindow(QMainWindow):
             else:
                 self._notify(tr("msg_ai_unavailable", self.language))
             return
-        self.ai_mode = not self.ai_mode
-        self.settings.setdefault("ui", {})["ai_mode"] = bool(self.ai_mode)
+        self._set_ai_enabled(not self.ai_mode, announce=True)
+
+    def _set_ai_enabled(self, enabled: bool, announce: bool = False) -> None:
+        self.ai_mode = bool(enabled)
+        self.settings.setdefault("ui", {})["ai_mode"] = bool(enabled)
+        self.settings.setdefault("app", {})["ai_enabled"] = bool(enabled)
+        if not enabled:
+            self._ai_session_token += 1
+            self._llm_queue.clear()
+            self._set_ai_busy(False)
         save_settings(self.settings)
         self._sync_ai_button()
+        if announce:
+            self._append_message(
+                tr("msg_ai_enabled" if enabled else "msg_ai_disabled", self.language),
+                is_user=False,
+            )
 
     def _sync_ai_button(self) -> None:
         try:
@@ -4106,12 +4447,23 @@ class AntoshkaWindow(QMainWindow):
         QTimer.singleShot(0, self, _start)
 
     def _apply_stt_mode_ui(self) -> None:
-        if isinstance(self.stt, TextSTT):
+        stt_mode = str((self.settings.get("stt", {}) or {}).get("mode", "text")).lower()
+        stt_required = stt_mode in {"vosk", "auto"}
+        stt_ready = bool(self._stt_available)
+        if not stt_ready:
             self.listen_btn.setEnabled(False)
             self.input_mic.setEnabled(False)
+            if stt_required:
+                tip = tr("tooltip_listen_disabled_vosk", self.language)
+            else:
+                tip = tr("status_text_mode", self.language)
+            self.listen_btn.setToolTip(tip)
+            self.input_mic.setToolTip(tip)
         else:
             self.listen_btn.setEnabled(True)
             self.input_mic.setEnabled(True)
+            self.listen_btn.setToolTip("")
+            self.input_mic.setToolTip("")
 
     def _init_wake_word(self) -> None:
         if self.wake_listener is not None:

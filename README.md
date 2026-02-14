@@ -64,6 +64,8 @@ python antoshka_ui.py
 
 - User guide: `docs/USER_GUIDE.md`
 - Developer guide: `docs/DEVELOPER_GUIDE.md`
+- Functions/code map: `docs/FUNCTIONS_README.md`
+- Functions/code map (RU): `docs/FUNCTIONS_README_RU.md`
 - Changelog: `CHANGELOG.md`
 - License: `LICENSE`
 - Security policy: `SECURITY.md`
